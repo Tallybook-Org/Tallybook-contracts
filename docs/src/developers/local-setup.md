@@ -20,7 +20,7 @@ need to run `rustup target add` by hand for a normal checkout.
 1.82 for contracts built this way. If you ever drive the toolchain by hand outside
 this repo's own `rust-toolchain.toml`, make sure you're targeting `wasm32v1-none`.
 
-Install the [Stellar CLI](https://developers.stellar.org/docs/tools/stellar-cli),
+Install the [Stellar CLI](https://developers.stellar.org/docs/tools/developer-tools/cli/stellar-cli),
 `28.0.0` or newer: `cargo install --locked stellar-cli`.
 
 ## The build-order requirement

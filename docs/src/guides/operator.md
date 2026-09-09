@@ -13,7 +13,7 @@ half — the `G...` address — is what `price_book` and `statement_registry` re
 need one funded with a little XLM to pay transaction fees, since every call that
 changes state (`publish`, `anchor`, and so on) costs a small fee.
 
-Install the [Stellar CLI](https://developers.stellar.org/docs/tools/stellar-cli), then
+Install the [Stellar CLI](https://developers.stellar.org/docs/tools/developer-tools/cli/stellar-cli), then
 create and fund an identity on testnet in one step:
 
 ```
