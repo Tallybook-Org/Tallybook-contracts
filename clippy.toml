@@ -1,0 +1,5 @@
+# No project-specific lint configuration is required yet. This file exists so
+# `cargo clippy` has a stable config target as the workspace grows, and so a
+# future lint exception has an obvious place to be documented instead of an
+# inline `#[allow]` with no rationale.
+avoid-breaking-exported-api = false

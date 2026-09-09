@@ -1,0 +1,8 @@
+/target/
+**/target/
+*.wasm
+.stellar/
+.env
+.env.*
+Cargo.lock.bak
+.DS_Store
