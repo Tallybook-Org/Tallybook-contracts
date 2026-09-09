@@ -42,18 +42,17 @@ jobs:
       - name: cargo fmt --check
         run: make fmt-check
 
+      # Must run before clippy/test: statement-registry's price_book.rs
+      # contractimports price-book's compiled wasm unconditionally, so
+      # `cargo clippy`/`cargo test` can't even compile statement-registry
+      # without it existing first. `make build` (not plain `stellar contract
+      # build`) is what encodes that ordering — this replaces the
+      # placeholder from step 19, deferred until this dependency was real.
+      - name: stellar contract build
+        run: make build
+
       - name: cargo clippy
         run: make clippy
 
       - name: cargo test
         run: make test
-
-      # Not `make build`: that target explicitly orders price-book before
-      # statement-registry for contractimport!, but statement-registry
-      # doesn't exist yet (it lands starting build-sequence step 20). Plain
-      # `stellar contract build` builds every cdylib crate currently in the
-      # workspace — today just price-book. Switch this to `make build` once
-      # statement-registry's contractimport! dependency on price-book's
-      # wasm output is real (build-sequence step 29).
-      - name: stellar contract build
-        run: stellar contract build

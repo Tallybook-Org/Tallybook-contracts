@@ -144,3 +144,37 @@ mod fixtures {
         assert_ne!(fold(&env, leaf, &proof), root);
     }
 }
+
+mod price_book_import {
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::{Address, String};
+
+    use super::*;
+
+    /// Registers the *real* compiled price_book.wasm — never a mock — and
+    /// drives it through the generated client, proving the contractimport!
+    /// wiring actually works end to end: publish a schedule, then read it
+    /// back via both get_version and version_at.
+    #[test]
+    fn real_wasm_registers_and_answers_queries() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let price_book_admin = Address::generate(&env);
+        let price_book_id = env.register(crate::price_book::WASM, (price_book_admin,));
+        let price_book_client = crate::price_book::Client::new(&env, &price_book_id);
+
+        let operator = Address::generate(&env);
+        let schedule_hash = BytesN::from_array(&env, &[9u8; 32]);
+        let uri = String::from_str(&env, "https://example.com/schedule.json");
+        let effective_ledger = env.ledger().sequence();
+
+        let version = price_book_client.publish(&operator, &schedule_hash, &uri, &effective_ledger);
+        assert_eq!(version, 1);
+
+        let fetched = price_book_client.get_version(&operator, &version);
+        assert_eq!(fetched.schedule_hash, schedule_hash);
+
+        assert_eq!(price_book_client.version_at(&operator, &effective_ledger), version);
+    }
+}

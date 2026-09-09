@@ -2,7 +2,8 @@
 
 # price-book has no dependencies. statement-registry contractimports its wasm
 # (see contracts/statement-registry/src/price_book.rs), so it must be built
-# after price-book or the import fails to find contracts/price_book.wasm.
+# after price-book or the import fails to find
+# target/wasm32v1-none/release/price_book.wasm.
 build: build-price-book build-statement-registry
 
 build-price-book:

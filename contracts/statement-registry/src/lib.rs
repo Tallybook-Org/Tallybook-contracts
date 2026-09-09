@@ -9,6 +9,7 @@ use soroban_sdk::{contract, contractimpl};
 mod error;
 mod event;
 mod merkle;
+mod price_book;
 mod storage;
 mod test;
 mod types;
