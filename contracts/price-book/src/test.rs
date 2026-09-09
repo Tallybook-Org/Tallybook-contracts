@@ -1,5 +1,9 @@
 #![cfg(test)]
 
+// The crate is #![no_std]; tests need std for the standard test harness and
+// for building throwaway data like an over-length URI below.
+extern crate std;
+
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 use crate::{Error, PriceBook};
@@ -94,5 +98,73 @@ mod publish {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn uri_too_long_is_rejected() {
+        let (env, contract_id, _admin) = setup();
+        env.mock_all_auths();
+        let client = PriceBookClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let long_uri = "a".repeat(201);
+        let uri = String::from_str(&env, &long_uri);
+        let current_ledger = env.ledger().sequence();
+
+        let result = client.try_publish(&operator, &schedule_hash(&env, 1), &uri, &current_ledger);
+        assert_eq!(result, Err(Ok(Error::UriTooLong)));
+    }
+
+    #[test]
+    fn effective_in_past_is_rejected() {
+        use soroban_sdk::testutils::Ledger as _;
+
+        let (env, contract_id, _admin) = setup();
+        env.mock_all_auths();
+        env.ledger().set_sequence_number(1_000);
+        let client = PriceBookClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let uri = String::from_str(&env, "https://example.com/schedule.json");
+
+        let result = client.try_publish(&operator, &schedule_hash(&env, 1), &uri, &999);
+        assert_eq!(result, Err(Ok(Error::EffectiveInPast)));
+    }
+
+    #[test]
+    fn effective_not_after_previous_is_rejected() {
+        let (env, contract_id, _admin) = setup();
+        env.mock_all_auths();
+        let client = PriceBookClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let uri = String::from_str(&env, "https://example.com/schedule.json");
+        let current_ledger = env.ledger().sequence();
+
+        client.publish(&operator, &schedule_hash(&env, 1), &uri, &current_ledger);
+
+        // Not strictly after the first version's effective_ledger: equal is
+        // rejected, same as anything lower would be.
+        let result = client.try_publish(&operator, &schedule_hash(&env, 2), &uri, &current_ledger);
+        assert_eq!(result, Err(Ok(Error::EffectiveNotAfter)));
+    }
+
+    #[test]
+    fn timeline_full_is_rejected_once_cap_is_reached() {
+        let (env, contract_id, _admin) = setup();
+        env.mock_all_auths();
+        let client = PriceBookClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let uri = String::from_str(&env, "https://example.com/schedule.json");
+        let current_ledger = env.ledger().sequence();
+
+        for i in 0..crate::storage::TIMELINE_CAP {
+            client.publish(&operator, &schedule_hash(&env, 1), &uri, &(current_ledger + i));
+        }
+
+        let result = client.try_publish(
+            &operator,
+            &schedule_hash(&env, 1),
+            &uri,
+            &(current_ledger + crate::storage::TIMELINE_CAP),
+        );
+        assert_eq!(result, Err(Ok(Error::TimelineFull)));
     }
 }
