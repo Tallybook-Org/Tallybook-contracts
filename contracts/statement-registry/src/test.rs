@@ -415,6 +415,84 @@ mod anchor {
         );
         assert_eq!(result, Err(Ok(Error::ChannelMismatch)));
     }
+
+    // The price_book check itself: anchored against a REAL deployed
+    // price_book (never mocked — see setup()'s own doc comment), because
+    // this is the check the whole contract exists for. PriceVersionUnknown
+    // isn't named in its own build-sequence step, so it's covered here
+    // alongside PriceVersionStale as the other half of the same
+    // cross-contract validation block.
+
+    #[test]
+    fn price_version_stale_is_rejected() {
+        let (env, contract_id, _admin, price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+
+        let base = env.ledger().sequence();
+        // v1, effective immediately.
+        let v1 = publish_schedule(&env, &price_book_id, &operator, base);
+        // v2 supersedes v1 partway through the eventual statement period.
+        let v2 = publish_schedule(&env, &price_book_id, &operator, base + 20);
+        assert_eq!(v2, v1 + 1);
+        env.ledger().set_sequence_number(base + 200);
+
+        // period_end (base + 100) is after v2's effective_ledger
+        // (base + 20), so version_at() returns v2 here — but the anchor
+        // call claims v1, the price that was in force before the raise.
+        // This is exactly the "anchor against a favourable old schedule"
+        // attempt the check exists to stop.
+        let result = client.try_anchor(
+            &operator,
+            &consumer,
+            &base,
+            &(base + 100),
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &v1,
+            &Protocol::X402,
+            &None,
+        );
+        assert_eq!(result, Err(Ok(Error::PriceVersionStale)));
+    }
+
+    #[test]
+    fn price_version_unknown_is_rejected() {
+        let (env, contract_id, _admin, _price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+        let base = env.ledger().sequence();
+        env.ledger().set_sequence_number(base + 100);
+
+        // operator has never published anything on the real price_book —
+        // version_at() itself errors, distinct from a version mismatch.
+        let result = client.try_anchor(
+            &operator,
+            &consumer,
+            &base,
+            &(base + 50),
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &1,
+            &Protocol::X402,
+            &None,
+        );
+        assert_eq!(result, Err(Ok(Error::PriceVersionUnknown)));
+    }
 }
 
 mod merkle {
