@@ -353,6 +353,68 @@ mod anchor {
         );
         assert_eq!(result, Err(Ok(Error::BadAmounts)));
     }
+
+    // ChannelMismatch is also checked before the price_book call, so these
+    // tests pass an arbitrary price_book_version (0) too.
+
+    #[test]
+    fn channel_missing_for_mpp_session_is_rejected() {
+        let (env, contract_id, _admin, _price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+        let base = env.ledger().sequence();
+        env.ledger().set_sequence_number(base + 100);
+
+        let result = client.try_anchor(
+            &operator,
+            &consumer,
+            &base,
+            &(base + 50),
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &0,
+            &Protocol::MppSession,
+            &None, // channel required for MppSession
+        );
+        assert_eq!(result, Err(Ok(Error::ChannelMismatch)));
+    }
+
+    #[test]
+    fn channel_present_for_non_session_protocol_is_rejected() {
+        let (env, contract_id, _admin, _price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let channel = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+        let base = env.ledger().sequence();
+        env.ledger().set_sequence_number(base + 100);
+
+        let result = client.try_anchor(
+            &operator,
+            &consumer,
+            &base,
+            &(base + 50),
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &0,
+            &Protocol::X402,
+            &Some(channel), // channel must be absent outside MppSession
+        );
+        assert_eq!(result, Err(Ok(Error::ChannelMismatch)));
+    }
 }
 
 mod merkle {
