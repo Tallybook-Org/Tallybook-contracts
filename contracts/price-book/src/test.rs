@@ -4,6 +4,12 @@ use soroban_sdk::{testutils::Address as _, Address, Env};
 
 use crate::{Error, PriceBook};
 
+/// A distinct 32-byte value per `seed`, standing in for a real sha256
+/// schedule hash — publish() never inspects its contents.
+fn schedule_hash(env: &Env, seed: u8) -> soroban_sdk::BytesN<32> {
+    soroban_sdk::BytesN::from_array(env, &[seed; 32])
+}
+
 /// Registers a fresh `PriceBook` with a generated admin. Auth is not
 /// mocked here — individual tests opt into `env.mock_all_auths()` or
 /// explicit `mock_auths` themselves, since which is correct differs per
@@ -39,5 +45,54 @@ mod constructor {
         let result =
             env.as_contract(&contract_id, || PriceBook::__constructor(env.clone(), admin.clone()));
         assert_eq!(result, Err(Error::AlreadyInitialized));
+    }
+}
+
+mod publish {
+    use soroban_sdk::{testutils::Events as _, vec, IntoVal, String, Symbol};
+
+    use crate::PriceBookClient;
+
+    use super::*;
+
+    #[test]
+    fn happy_path_returns_incrementing_versions() {
+        let (env, contract_id, _admin) = setup();
+        env.mock_all_auths();
+        let client = PriceBookClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let uri = String::from_str(&env, "https://example.com/schedule.json");
+        let current_ledger = env.ledger().sequence();
+
+        let v1 = client.publish(&operator, &schedule_hash(&env, 1), &uri, &current_ledger);
+        assert_eq!(v1, 1);
+
+        let v2 = client.publish(&operator, &schedule_hash(&env, 2), &uri, &(current_ledger + 1));
+        assert_eq!(v2, 2);
+    }
+
+    #[test]
+    fn happy_path_emits_publish_event() {
+        let (env, contract_id, _admin) = setup();
+        env.mock_all_auths();
+        let client = PriceBookClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let hash = schedule_hash(&env, 7);
+        let uri = String::from_str(&env, "https://example.com/schedule.json");
+        let current_ledger = env.ledger().sequence();
+
+        let version = client.publish(&operator, &hash, &uri, &current_ledger);
+
+        assert_eq!(
+            env.events().all(),
+            vec![
+                &env,
+                (
+                    contract_id.clone(),
+                    (Symbol::new(&env, "price_book"), Symbol::new(&env, "publish")).into_val(&env),
+                    (operator, version, hash, current_ledger).into_val(&env),
+                ),
+            ]
+        );
     }
 }
