@@ -4,6 +4,7 @@
 
 use soroban_sdk::{contract, contractimpl};
 
+mod error;
 mod types;
 
 #[contract]
