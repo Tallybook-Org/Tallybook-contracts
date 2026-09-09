@@ -2,7 +2,7 @@
 //! charges and from when. See the workspace README for the full interface.
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, Address, Env};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String};
 
 mod error;
 mod event;
@@ -11,6 +11,7 @@ mod test;
 mod types;
 
 use error::Error;
+use types::{PriceBookVersion, TimelineEntry};
 
 #[contract]
 pub struct PriceBook;
@@ -36,5 +37,70 @@ impl PriceBook {
         storage::set_admin(&env, &admin);
         storage::extend_instance_ttl(&env);
         Ok(())
+    }
+
+    /// Publishes a new price schedule version for `operator`. Callable only
+    /// by `operator`.
+    ///
+    /// Schedules must move strictly forward in time: `effective_ledger` may
+    /// equal the current ledger (effective immediately) but not precede it,
+    /// and must strictly exceed the previous version's `effective_ledger` if
+    /// one exists. `uri` must be at most 200 bytes.
+    ///
+    /// Returns the new version number (the first published version is 1).
+    ///
+    /// Errors: `UriTooLong`, `EffectiveInPast`, `EffectiveNotAfter`,
+    /// `TimelineFull`.
+    pub fn publish(
+        env: Env,
+        operator: Address,
+        schedule_hash: BytesN<32>,
+        uri: String,
+        effective_ledger: u32,
+    ) -> Result<u32, Error> {
+        operator.require_auth();
+
+        if uri.len() > 200 {
+            return Err(Error::UriTooLong);
+        }
+
+        let current_ledger = env.ledger().sequence();
+        if effective_ledger < current_ledger {
+            return Err(Error::EffectiveInPast);
+        }
+
+        let mut timeline = storage::get_timeline(&env, &operator);
+        if let Some(previous) = timeline.last() {
+            if effective_ledger <= previous.effective_ledger {
+                return Err(Error::EffectiveNotAfter);
+            }
+        }
+        if timeline.len() >= storage::TIMELINE_CAP {
+            return Err(Error::TimelineFull);
+        }
+
+        // Safe: timeline.len() gains exactly one entry per publish and is
+        // bounded above by TIMELINE_CAP (checked just above), so `latest`
+        // here is at most TIMELINE_CAP and this addition cannot overflow.
+        let version = storage::get_latest(&env, &operator).unwrap_or(0) + 1;
+        let published_ledger = current_ledger;
+
+        let price_book_version = PriceBookVersion {
+            operator: operator.clone(),
+            version,
+            schedule_hash: schedule_hash.clone(),
+            uri,
+            effective_ledger,
+            published_ledger,
+        };
+        storage::set_version(&env, &operator, version, &price_book_version);
+        storage::set_latest(&env, &operator, version);
+        timeline.push_back(TimelineEntry { effective_ledger, version });
+        storage::set_timeline(&env, &operator, &timeline);
+        storage::extend_instance_ttl(&env);
+
+        event::publish(&env, operator, version, schedule_hash, effective_ledger);
+
+        Ok(version)
     }
 }

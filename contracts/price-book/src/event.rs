@@ -6,9 +6,7 @@
 // byte interface another repo parses positionally — not something to
 // restructure on a lint's say-so. Keeping the deprecated call, scoped and
 // documented, is the safer choice.
-//
-// dead_code: unused until publish() (build sequence step 11) calls it.
-#![allow(deprecated, dead_code)]
+#![allow(deprecated)]
 
 use soroban_sdk::{Address, BytesN, Env, Symbol};
 

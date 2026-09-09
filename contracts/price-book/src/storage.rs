@@ -1,8 +1,3 @@
-// Per CLAUDE.md's build sequence, storage helpers land in their own commit
-// before the constructor and publish() exist to call them. Lifted once
-// lib.rs has a caller for every helper below.
-#![allow(dead_code)]
-
 use soroban_sdk::{contracttype, vec, Address, Env, Vec};
 
 use crate::types::{PriceBookVersion, TimelineEntry};
@@ -65,6 +60,9 @@ pub fn set_latest(env: &Env, operator: &Address, version: u32) {
 }
 
 /// A single published version, if it exists.
+// Consumed by the public `get_version` function (build sequence step 15),
+// not by publish().
+#[allow(dead_code)]
 pub fn get_version(env: &Env, operator: &Address, version: u32) -> Option<PriceBookVersion> {
     env.storage().persistent().get(&DataKey::Version(operator.clone(), version))
 }
