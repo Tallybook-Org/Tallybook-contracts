@@ -990,6 +990,199 @@ mod open_dispute {
     }
 }
 
+mod resolve_dispute {
+    use soroban_sdk::testutils::{Events as _, Ledger as _};
+    use soroban_sdk::Event as _;
+
+    use crate::event::ResolveEvent;
+    use crate::types::{Protocol, Status};
+    use crate::StatementRegistryClient;
+
+    use super::*;
+
+    /// Anchors a statement and opens a dispute against it. Returns
+    /// (Env, contract_id, operator, consumer, seq), with amount_billed
+    /// fixed at 1000 so tests can reason about CreditTooLarge's boundary.
+    fn anchor_and_dispute() -> (Env, Address, Address, Address, u64) {
+        let (env, contract_id, _admin, price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+
+        let base = env.ledger().sequence();
+        let version = publish_schedule(&env, &price_book_id, &operator, base);
+        env.ledger().set_sequence_number(base + 100);
+
+        let seq = client.anchor(
+            &operator,
+            &consumer,
+            &base,
+            &(base + 50),
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &version,
+            &Protocol::X402,
+            &None,
+        );
+        let reason_hash = BytesN::from_array(&env, &[7u8; 32]);
+        client.open_dispute(&operator, &seq, &consumer, &reason_hash);
+
+        (env, contract_id, operator, consumer, seq)
+    }
+
+    #[test]
+    fn happy_path_sets_status_resolved_and_writes_dispute() {
+        let (env, contract_id, operator, consumer, seq) = anchor_and_dispute();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let resolution_hash = BytesN::from_array(&env, &[9u8; 32]);
+
+        client.resolve_dispute(&operator, &seq, &resolution_hash, &500i128);
+
+        let (status, dispute) = env.as_contract(&contract_id, || {
+            (
+                crate::storage::get_statement(&env, &operator, seq).unwrap().status,
+                crate::storage::get_dispute(&env, &operator, seq).unwrap(),
+            )
+        });
+        assert_eq!(status, Status::Resolved);
+        assert_eq!(dispute.consumer, consumer);
+        assert_eq!(dispute.resolution_hash, Some(resolution_hash));
+        assert_eq!(dispute.amount_credited, 500);
+        assert!(dispute.resolved_ledger.is_some());
+    }
+
+    #[test]
+    fn happy_path_emits_resolve_event() {
+        let (env, contract_id, operator, consumer, seq) = anchor_and_dispute();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let resolution_hash = BytesN::from_array(&env, &[9u8; 32]);
+
+        client.resolve_dispute(&operator, &seq, &resolution_hash, &500i128);
+
+        let expected =
+            ResolveEvent { operator, consumer, seq, resolution_hash, amount_credited: 500 }
+                .to_xdr(&env, &contract_id);
+        assert_eq!(env.events().all(), std::vec![expected]);
+    }
+
+    #[test]
+    fn not_disputed_when_still_anchored() {
+        let (env, contract_id, _admin, price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+
+        let base = env.ledger().sequence();
+        let version = publish_schedule(&env, &price_book_id, &operator, base);
+        env.ledger().set_sequence_number(base + 100);
+
+        // Anchored, never disputed.
+        let seq = client.anchor(
+            &operator,
+            &consumer,
+            &base,
+            &(base + 50),
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &version,
+            &Protocol::X402,
+            &None,
+        );
+        let resolution_hash = BytesN::from_array(&env, &[9u8; 32]);
+
+        let result = client.try_resolve_dispute(&operator, &seq, &resolution_hash, &500i128);
+        assert_eq!(result, Err(Ok(Error::NotDisputed)));
+    }
+
+    #[test]
+    fn credit_too_large_negative_is_rejected() {
+        let (env, contract_id, operator, _consumer, seq) = anchor_and_dispute();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let resolution_hash = BytesN::from_array(&env, &[9u8; 32]);
+
+        let result = client.try_resolve_dispute(&operator, &seq, &resolution_hash, &(-1i128));
+        assert_eq!(result, Err(Ok(Error::CreditTooLarge)));
+    }
+
+    #[test]
+    fn credit_too_large_exceeds_billed_is_rejected() {
+        let (env, contract_id, operator, _consumer, seq) = anchor_and_dispute();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let resolution_hash = BytesN::from_array(&env, &[9u8; 32]);
+
+        // amount_billed was 1000 in anchor_and_dispute().
+        let result = client.try_resolve_dispute(&operator, &seq, &resolution_hash, &1001i128);
+        assert_eq!(result, Err(Ok(Error::CreditTooLarge)));
+    }
+
+    #[test]
+    fn single_signer_operator_only_is_rejected() {
+        use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+        use soroban_sdk::IntoVal;
+
+        let (env, contract_id, operator, _consumer, seq) = anchor_and_dispute();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let resolution_hash = BytesN::from_array(&env, &[9u8; 32]);
+
+        // Only operator authorized — consumer's own require_auth() has no
+        // matching entry.
+        env.mock_auths(&[MockAuth {
+            address: &operator,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "resolve_dispute",
+                args: (operator.clone(), seq, resolution_hash.clone(), 500i128).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+
+        let result = client.try_resolve_dispute(&operator, &seq, &resolution_hash, &500i128);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn single_signer_consumer_only_is_rejected() {
+        use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+        use soroban_sdk::IntoVal;
+
+        let (env, contract_id, operator, consumer, seq) = anchor_and_dispute();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let resolution_hash = BytesN::from_array(&env, &[9u8; 32]);
+
+        // Only consumer authorized — operator.require_auth() is the very
+        // first check in resolve_dispute(), so this fails before the
+        // statement is even loaded.
+        env.mock_auths(&[MockAuth {
+            address: &consumer,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "resolve_dispute",
+                args: (operator.clone(), seq, resolution_hash.clone(), 500i128).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+
+        let result = client.try_resolve_dispute(&operator, &seq, &resolution_hash, &500i128);
+        assert!(result.is_err());
+    }
+}
+
 mod merkle {
     use soroban_sdk::vec;
 
