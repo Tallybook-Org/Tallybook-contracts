@@ -32,23 +32,10 @@ mod constructor {
     fn happy_path_sets_admin() {
         // There is no public getter for Admin — by design, it holds no
         // power and nothing reads it back — so reach into storage.rs
-        // directly (crate-internal) to prove the write actually landed,
-        // rather than only inferring it from the double-init guard below.
+        // directly (crate-internal) to prove the write actually landed.
         let (env, contract_id, _admin) = setup();
         let admin_is_set = env.as_contract(&contract_id, || crate::storage::has_admin(&env));
         assert!(admin_is_set);
-    }
-
-    #[test]
-    fn double_initialization_is_rejected() {
-        let (env, contract_id, admin) = setup();
-        // The host only invokes a constructor once per real deployment;
-        // env.as_contract lets this test call the guarded function again
-        // directly, in the deployed contract's own storage context, to
-        // prove the AlreadyInitialized guard actually fires.
-        let result =
-            env.as_contract(&contract_id, || PriceBook::__constructor(env.clone(), admin.clone()));
-        assert_eq!(result, Err(Error::AlreadyInitialized));
     }
 }
 

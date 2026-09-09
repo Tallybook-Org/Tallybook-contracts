@@ -27,17 +27,12 @@ impl PriceBook {
     /// rent funding; there is no admin-gated function anywhere in this
     /// contract.
     ///
-    /// Returns `AlreadyInitialized` if called a second time. The host only
-    /// invokes a constructor once per deployment, so this guards against a
-    /// direct second call rather than a real deployment scenario — cheap
-    /// insurance against a construction path this contract does not expect.
-    pub fn __constructor(env: Env, admin: Address) -> Result<(), Error> {
-        if storage::has_admin(&env) {
-            return Err(Error::AlreadyInitialized);
-        }
+    /// Per CAP-0058, the host invokes a contract's constructor exactly once,
+    /// at creation, and it is never callable again — so there is no
+    /// double-initialization case to guard against here.
+    pub fn __constructor(env: Env, admin: Address) {
         storage::set_admin(&env, &admin);
         storage::extend_instance_ttl(&env);
-        Ok(())
     }
 
     /// Publishes a new price schedule version for `operator`. Callable only
