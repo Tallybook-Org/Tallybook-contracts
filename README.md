@@ -269,7 +269,7 @@ summing SAC transfer and channel events for the period and flagging mismatches.
 
 | Name | Role | GitHub | Telegram |
 |---|---|---|---|
-| Cisco | Maintainer | [@ciscokwiz](https://github.com/ciscokwiz) | TODO |
+| Cisco | Maintainer | [@ciscokwiz](https://github.com/ciscokwiz) | [@cisco_i](https://t.me/cisco_i) |
 
 ## Contributing
 
