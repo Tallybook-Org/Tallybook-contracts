@@ -269,3 +269,66 @@ mod latest {
         assert_eq!(result, Err(Ok(Error::NotFound)));
     }
 }
+
+mod version_at {
+    use soroban_sdk::String;
+
+    use crate::PriceBookClient;
+
+    use super::*;
+
+    #[test]
+    fn empty_timeline_is_not_found() {
+        let (env, contract_id, _admin) = setup();
+        let client = PriceBookClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+
+        let result = client.try_version_at(&operator, &0);
+        assert_eq!(result, Err(Ok(Error::NotFound)));
+    }
+
+    #[test]
+    fn before_first_version_is_not_found() {
+        let (env, contract_id, _admin) = setup();
+        env.mock_all_auths();
+        let client = PriceBookClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let uri = String::from_str(&env, "https://example.com/schedule.json");
+        let current_ledger = env.ledger().sequence();
+        let first_effective = current_ledger + 10;
+
+        client.publish(&operator, &schedule_hash(&env, 1), &uri, &first_effective);
+
+        let result = client.try_version_at(&operator, &(first_effective - 1));
+        assert_eq!(result, Err(Ok(Error::NotFound)));
+    }
+
+    #[test]
+    fn exactly_equal_ledger_returns_that_version() {
+        let (env, contract_id, _admin) = setup();
+        env.mock_all_auths();
+        let client = PriceBookClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let uri = String::from_str(&env, "https://example.com/schedule.json");
+        let current_ledger = env.ledger().sequence();
+
+        let version = client.publish(&operator, &schedule_hash(&env, 1), &uri, &current_ledger);
+
+        assert_eq!(client.version_at(&operator, &current_ledger), version);
+    }
+
+    #[test]
+    fn after_last_version_returns_the_latest_version() {
+        let (env, contract_id, _admin) = setup();
+        env.mock_all_auths();
+        let client = PriceBookClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let uri = String::from_str(&env, "https://example.com/schedule.json");
+        let current_ledger = env.ledger().sequence();
+
+        client.publish(&operator, &schedule_hash(&env, 1), &uri, &current_ledger);
+        let v2 = client.publish(&operator, &schedule_hash(&env, 2), &uri, &(current_ledger + 5));
+
+        assert_eq!(client.version_at(&operator, &(current_ledger + 1_000)), v2);
+    }
+}
