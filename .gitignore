@@ -2,7 +2,6 @@
 **/target/
 *.wasm
 .stellar/
-test_snapshots/
 .env
 .env.*
 Cargo.lock.bak
