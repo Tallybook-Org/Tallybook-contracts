@@ -123,4 +123,44 @@ impl PriceBook {
     pub fn latest(env: Env, operator: Address) -> Result<u32, Error> {
         storage::get_latest(&env, &operator).ok_or(Error::NotFound)
     }
+
+    /// Returns which version of `operator`'s price schedule was in force at
+    /// `ledger`: the version with the highest `effective_ledger` not
+    /// exceeding `ledger`. No auth — read-only. This is the function
+    /// `statement_registry` calls, and the function a buyer calls to check
+    /// which prices applied on the day they were billed.
+    ///
+    /// Binary searches `Timeline(operator)` rather than scanning every
+    /// published version, so this stays cheap even near `TIMELINE_CAP`.
+    ///
+    /// Errors: `NotFound` if the timeline is empty or every entry's
+    /// `effective_ledger` is after `ledger`.
+    pub fn version_at(env: Env, operator: Address, ledger: u32) -> Result<u32, Error> {
+        let timeline = storage::get_timeline(&env, &operator);
+
+        // Upper-bound binary search: after the loop, `count` is the number
+        // of entries with effective_ledger <= ledger. Timeline is ascending
+        // by effective_ledger, so the entry at count - 1, if any, is the
+        // one with the highest effective_ledger not exceeding `ledger`.
+        let mut lo: u32 = 0;
+        let mut hi: u32 = timeline.len();
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            // Unreachable: mid is always < hi <= timeline.len() here, so
+            // the entry always exists.
+            let entry = timeline.get(mid).ok_or(Error::NotFound)?;
+            if entry.effective_ledger <= ledger {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+
+        if lo == 0 {
+            return Err(Error::NotFound);
+        }
+        // Unreachable: lo - 1 < timeline.len() by construction above.
+        let entry = timeline.get(lo - 1).ok_or(Error::NotFound)?;
+        Ok(entry.version)
+    }
 }
