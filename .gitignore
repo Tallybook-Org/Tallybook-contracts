@@ -6,3 +6,4 @@
 .env.*
 Cargo.lock.bak
 .DS_Store
+/docs/book/

@@ -1,0 +1,13 @@
+[book]
+title = "Tallybook"
+authors = ["Tallybook contributors"]
+description = "Settlement bookkeeping for services paid per request by machines."
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/Tallybook-Org/tallybook-contracts"
+edit-url-template = "https://github.com/Tallybook-Org/tallybook-contracts/edit/main/docs/{path}"
+site-url = "/tallybook-contracts/"
+default-theme = "light"
+preferred-dark-theme = "navy"

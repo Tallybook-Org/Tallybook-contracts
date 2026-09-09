@@ -1,5 +1,13 @@
 # Contributing
 
+## Documentation site
+
+The docs site lives in `docs/` and builds with [mdBook](https://github.com/rust-lang/mdBook).
+Install it with `cargo install mdbook` (or `brew install mdbook`), then run
+`mdbook serve docs` for a live-reloading local preview, or `mdbook build docs` to build
+the static site to `docs/book/`, which is gitignored — it is build output, not
+something you commit.
+
 ## Build and test
 
 See the README's Build section. In short: `make build` before `cargo test` or
