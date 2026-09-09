@@ -1,3 +1,293 @@
-# Invoking
+# Invoking the contracts
 
-This page is a stub. Content lands in a later commit in the build sequence.
+Every command below was run for real against the live testnet deployment —
+`price_book` at `CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW` and
+`statement_registry` at `CB75TTWGP3TLKEDGA2WOLEVCNKLUX6X5KS47GMWGBHUAVES7J55LY25M` —
+before this page was committed, using the `tb-deployer` identity as `operator` and a
+freshly generated `tb-consumer-demo` identity as `consumer`. Output shown is the
+actual output, not retyped. `__constructor` isn't repeated here since it only runs
+once, at deploy — see [Deploying](deploying.md).
+
+## `price_book`
+
+### `publish`
+
+```
+stellar contract invoke \
+  --id CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW \
+  --network testnet \
+  --source tb-deployer \
+  --send=yes \
+  -- publish \
+  --operator GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM \
+  --schedule_hash e759c25665bbca00d8f9efc4cfeb5a642613205085fca0bf75f805fdfc7525b7 \
+  --uri https://example.com/tallybook-testnet-schedule-v2.json \
+  --effective_ledger 4600000
+```
+
+```
+🔗 https://stellar.expert/explorer/testnet/tx/c24d843cbee7c74dca0f5c04b80263f6cb1b26f411e036597c7745511e3b2cd2
+📅 ... Event: PublishEvent (price_book, publish), operator: "GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM", version: 2, schedule_hash: "e759c25665bbca00d8f9efc4cfeb5a642613205085fca0bf75f805fdfc7525b7", effective_ledger: 4600000
+2
+```
+
+This publishes version `2` for an operator who had already published version `1`
+earlier (`effective_ledger: 4600000` is in the future relative to when this ran, so
+`version_at` for any ledger before that still returns `1`, checked below).
+
+### `get_version`
+
+```
+stellar contract invoke \
+  --id CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW \
+  --network testnet \
+  --source tb-deployer \
+  -- get_version \
+  --operator GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM \
+  --version 1
+```
+
+```json
+{"effective_ledger":4587955,"operator":"GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM","published_ledger":4587953,"schedule_hash":"d7f49405bb09c04a84b2d1dd710a1098b94c54fb6c7e5803053d05a417b96f69","uri":"https://example.com/tallybook-testnet-schedule.json","version":1}
+```
+
+### `latest`
+
+```
+stellar contract invoke \
+  --id CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW \
+  --network testnet --source tb-deployer -- latest \
+  --operator GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM
+```
+
+```
+2
+```
+
+### `version_at`
+
+```
+stellar contract invoke \
+  --id CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW \
+  --network testnet --source tb-deployer -- version_at \
+  --operator GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM \
+  --ledger 4592300
+```
+
+```
+1
+```
+
+Ledger `4,592,300` is before version `2`'s `effective_ledger` (`4,600,000`), so this
+correctly still returns `1` even though a newer version exists.
+
+## `statement_registry`
+
+### `anchor`
+
+```
+stellar contract invoke \
+  --id CB75TTWGP3TLKEDGA2WOLEVCNKLUX6X5KS47GMWGBHUAVES7J55LY25M \
+  --network testnet \
+  --source tb-deployer \
+  --send=yes \
+  -- anchor \
+  --operator GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM \
+  --consumer GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY \
+  --period_start 4590000 \
+  --period_end 4592000 \
+  --usage_root bb48f8056bf24646e0e9eb0758ca0c3769ece76845023c4d320438182d9ee3fa \
+  --request_count 5 \
+  --token CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
+  --amount_billed 500000 \
+  --amount_settled 500000 \
+  --price_book_version 1 \
+  --protocol X402
+```
+
+```
+🔗 https://stellar.expert/explorer/testnet/tx/54da8ffd78e0061c7f1d2ace7139ca7628ec3e7f70807b8493ec87b57be72d48
+📅 ... Event: AnchorEvent (statement, anchor), operator: "GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM", consumer: "GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY", seq: 1, usage_root: "bb48f8056bf24646e0e9eb0758ca0c3769ece76845023c4d320438182d9ee3fa", amount_billed: "500000", amount_settled: "500000", protocol: "X402"
+1
+```
+
+`--channel` is omitted, since `Option<Address>` with no flag passed means `None` —
+correct for `Protocol::X402`. Fee charged: `2,726,864` stroops
+(≈ $0.0502 — see [the worked example](../protocol/worked-example.md#the-cost-of-anchoring)).
+
+### `verify_usage`
+
+```
+stellar contract invoke \
+  --id CB75TTWGP3TLKEDGA2WOLEVCNKLUX6X5KS47GMWGBHUAVES7J55LY25M \
+  --network testnet --source tb-deployer -- verify_usage \
+  --operator GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM \
+  --seq 1 \
+  --leaf bb48f8056bf24646e0e9eb0758ca0c3769ece76845023c4d320438182d9ee3fa \
+  --proof '[]'
+```
+
+```
+true
+```
+
+See [Verifying a charge](../guides/verifying-a-charge.md) for the full walkthrough,
+including the matching negative case.
+
+### `open_dispute`
+
+Signed by the **consumer**, not the operator:
+
+```
+stellar contract invoke \
+  --id CB75TTWGP3TLKEDGA2WOLEVCNKLUX6X5KS47GMWGBHUAVES7J55LY25M \
+  --network testnet \
+  --source tb-consumer-demo \
+  --send=yes \
+  -- open_dispute \
+  --operator GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM \
+  --seq 1 \
+  --consumer GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY \
+  --reason_hash 0101010101010101010101010101010101010101010101010101010101010101
+```
+
+```
+🔗 https://stellar.expert/explorer/testnet/tx/32a75e2f9264e5bc518fefa474a33cfc3202760afb2e0c3b4348d02b78340af6
+📅 ... Event: DisputeEvent (statement, dispute), operator: "GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM", consumer: "GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY", seq: 1, reason_hash: "0101010101010101010101010101010101010101010101010101010101010101"
+null
+```
+
+### `resolve_dispute` — the two-signature case
+
+`resolve_dispute` needs **both** the operator's and the consumer's authorization in
+one call. `stellar contract invoke --source <one account>` only signs for one
+address, and — tested directly, on this exact call — `stellar-cli 28.0.0`'s
+`--sign-with-key` doesn't fill in a second party's Soroban authorization entry
+either; passing it (as an identity, and as a raw secret key) produced the same
+`Missing signing key for account ...` error as leaving it off; a `--build-only` XDR
+comes back with `"auth": []` entirely, since `--build-only` skips simulation and
+never records what authorization is even needed. What worked: simulate for real to
+record both required auth entries (`stellar tx simulate`, piping a built-only XDR
+through it), which surfaces one `source_account` credential (the operator's — no
+separate signature needed, since the operator is the transaction's source account)
+and one `address` credential (the consumer's — genuinely needs its own signature).
+Signing *that* consumer entry isn't something `stellar tx sign` does either, despite
+its `--auto-sign` flag's description mentioning "non-root Soroban auth entries" —
+in practice it only appends transaction-envelope signatures. The reliable path ended
+up being the Stellar SDK's own `authorize_entry` helper (Python `stellar-sdk`),
+which signs the specific authorization-entry preimage the consumer's address needs
+to sign, separate from signing the transaction itself:
+
+```python
+from stellar_sdk import SorobanServer, TransactionBuilder, Network, Keypair, scval, xdr
+from stellar_sdk.auth import authorize_entry
+
+server = SorobanServer("https://soroban-testnet.stellar.org")
+source_account = server.load_account(operator_kp.public_key)
+
+tx = (TransactionBuilder(source_account, network_passphrase=Network.TESTNET_NETWORK_PASSPHRASE, base_fee=100)
+      .append_invoke_contract_function_op(
+          "CB75TTWGP3TLKEDGA2WOLEVCNKLUX6X5KS47GMWGBHUAVES7J55LY25M",
+          "resolve_dispute",
+          [scval.to_address(operator_kp.public_key), scval.to_uint64(1),
+           scval.to_bytes(bytes.fromhex("02" * 32)), scval.to_int128(0)],
+      )
+      .set_timeout(300).build())
+
+tx = server.prepare_transaction(tx)  # simulates; fills in both auth entries
+
+valid_until = server.get_latest_ledger().sequence + 200
+op = tx.transaction.operations[0]
+for i, entry in enumerate(op.auth):
+    if entry.credentials.type != xdr.SorobanCredentialsType.SOROBAN_CREDENTIALS_SOURCE_ACCOUNT:
+        op.auth[i] = authorize_entry(entry, consumer_kp, valid_until, Network.TESTNET_NETWORK_PASSPHRASE)
+
+tx.sign(operator_kp)          # the transaction envelope itself
+resp = server.send_transaction(tx)
+```
+
+One real bug worth naming, since it cost real debugging time: the first attempt
+checked `entry.credentials.address is not None` to decide which entries needed
+signing, and every entry silently failed that check — this network issues
+`SOROBAN_CREDENTIALS_ADDRESS_V2` (CAP-71) credentials now, which live under
+`entry.credentials.address_v2`, not `.address`. Checking `entry.credentials.type !=
+SOROBAN_CREDENTIALS_SOURCE_ACCOUNT` instead (as above) doesn't care which address
+variant is in play, and is what actually worked.
+
+Result:
+
+```
+🔗 https://stellar.expert/explorer/testnet/tx/2fe06a897192352c8b73ffa571c44446581046e4c8b4cb36a78e90702cacad43
+status: SUCCESS
+fee_charged: 122638 stroops
+```
+
+Confirmed after the fact with a plain read:
+
+```
+stellar contract invoke \
+  --id CB75TTWGP3TLKEDGA2WOLEVCNKLUX6X5KS47GMWGBHUAVES7J55LY25M \
+  --network testnet --source tb-deployer -- get_statement \
+  --operator GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM --seq 1
+```
+
+```json
+{"amount_billed":"500000","amount_settled":"500000","anchored_ledger":4592019,"channel":null,"consumer":"GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY","operator":"GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM","period_end":4592000,"period_start":4590000,"price_book_version":1,"protocol":"X402","request_count":5,"status":"Resolved","token":"CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC","usage_root":"bb48f8056bf24646e0e9eb0758ca0c3769ece76845023c4d320438182d9ee3fa"}
+```
+
+`status: "Resolved"`.
+
+### `get_statement`
+
+Shown above. No auth required.
+
+### `list_statements`
+
+```
+stellar contract invoke \
+  --id CB75TTWGP3TLKEDGA2WOLEVCNKLUX6X5KS47GMWGBHUAVES7J55LY25M \
+  --network testnet --source tb-deployer -- list_statements \
+  --operator GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM \
+  --consumer GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY
+```
+
+```
+[1]
+```
+
+### `get_dispute`
+
+```
+stellar contract invoke \
+  --id CB75TTWGP3TLKEDGA2WOLEVCNKLUX6X5KS47GMWGBHUAVES7J55LY25M \
+  --network testnet --source tb-deployer -- get_dispute \
+  --operator GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM --seq 1
+```
+
+```json
+{"amount_credited":"0","consumer":"GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY","opened_ledger":4592152,"reason_hash":"0101010101010101010101010101010101010101010101010101010101010101","resolution_hash":"0202020202020202020202020202020202020202020202020202020202020202","resolved_ledger":4592262}
+```
+
+### `extend_statement_ttl`
+
+Run from the **consumer** identity deliberately — proving the "no auth, anyone may
+pay rent" design actually holds, not just the operator extending their own record:
+
+```
+stellar contract invoke \
+  --id CB75TTWGP3TLKEDGA2WOLEVCNKLUX6X5KS47GMWGBHUAVES7J55LY25M \
+  --network testnet \
+  --source tb-consumer-demo \
+  --send=yes \
+  -- extend_statement_ttl \
+  --operator GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM \
+  --seq 1 \
+  --ledgers 100000
+```
+
+```
+🔗 https://stellar.expert/explorer/testnet/tx/dfdc3cf625dd5cdc10182b091446767d2f07be79b3707a4b075a1a199d66b78a
+null
+```
+
+`null` is `Ok(())` — success, no return value.
