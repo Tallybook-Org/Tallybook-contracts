@@ -140,6 +140,37 @@ verify_usage(operator: acme-weather-api, seq: 1, leaf: leaf_a, proof: [leaf_b])
 hash to something else, the root wouldn't match, and `verify_usage` would return
 `false` — not an error, since the proof itself is well-formed.
 
-No transaction fee appears anywhere on this page — none of the calls above were run
-against a live network for this example. [Invoking the contracts](../developers/invoking.md)
-runs real commands against the testnet deployment and reports real fees.
+## The cost of anchoring
+
+None of the calls in this walkthrough were run against a live network — the numbers
+above are illustrative. One number here isn't: `price_book`'s real `publish()` call on
+the live testnet deployment, made to set up that contract for use, is a real
+transaction with a measured fee.
+
+```
+tx hash:     be5cc70b41bc89b139011c0b69945596856709ca35ca6074191126ca70024021
+ledger:      4,587,953 (testnet)
+fee_charged: 1,963,213 stroops = 0.1963213 XLM
+source:      https://horizon-testnet.stellar.org/transactions/be5cc70b41bc89b139011c0b69945596856709ca35ca6074191126ca70024021
+```
+
+At the XLM/USD spot price quoted by CoinGecko's public API at the time of writing
+(`$0.184197`), that fee is:
+
+```
+0.1963213 XLM × $0.184197/XLM ≈ $0.0362
+```
+
+$0.0362 against the $1,000.00 this operator billed for the month is about **0.0036%
+of revenue — one part in roughly 27,700**. `anchor()` has not itself been invoked and
+measured on testnet — its fee is a separate, unmeasured number, and this page doesn't
+claim it equals `publish()`'s. What the two calls have in common is the part that
+matters for this comparison: each is a single Soroban invocation writing a handful of
+persistent entries, paid for once, regardless of how much history that one call
+represents. `anchor()` here represents 100,000 requests; a fee of this rough order,
+paid once for the whole period, is why one `anchor()` call is viable where a
+per-request on-chain write is not — at this same per-invocation cost, writing once per
+request instead of once per period would run **100,000 × $0.0362 ≈ $3,616**, more than
+three and a half times the entire month's billed revenue, before either contract does
+anything with the money. [Invoking the contracts](../developers/invoking.md) runs
+`anchor()` for real and reports its own measured fee once it has.
