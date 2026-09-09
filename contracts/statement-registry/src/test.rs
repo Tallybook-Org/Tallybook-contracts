@@ -493,6 +493,115 @@ mod anchor {
         );
         assert_eq!(result, Err(Ok(Error::PriceVersionUnknown)));
     }
+
+    #[test]
+    fn unauthorized_caller_is_rejected() {
+        use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+        use soroban_sdk::IntoVal;
+
+        let (env, contract_id, _admin, _price_book_id) = setup();
+        let operator = Address::generate(&env);
+        let attacker = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+        let base = env.ledger().sequence();
+        env.ledger().set_sequence_number(base + 100);
+
+        let client = StatementRegistryClient::new(&env, &contract_id);
+
+        // Authorize attacker, not operator — anchor() requires
+        // operator.require_auth(), so this must fail even though *some*
+        // valid auth entry is present.
+        env.mock_auths(&[MockAuth {
+            address: &attacker,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "anchor",
+                args: (
+                    operator.clone(),
+                    consumer.clone(),
+                    base,
+                    base + 50,
+                    usage_root.clone(),
+                    10u64,
+                    token.clone(),
+                    1000i128,
+                    900i128,
+                    1u32,
+                    Protocol::X402,
+                    Option::<Address>::None,
+                )
+                    .into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+
+        let result = client.try_anchor(
+            &operator,
+            &consumer,
+            &base,
+            &(base + 50),
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &1,
+            &Protocol::X402,
+            &None,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn index_full_is_rejected_once_cap_is_reached() {
+        let (env, contract_id, _admin, price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+
+        let base = env.ledger().sequence();
+        let version = publish_schedule(&env, &price_book_id, &operator, base);
+        env.ledger().set_sequence_number(base + crate::storage::CONSUMER_IDX_CAP + 100);
+
+        for i in 0..crate::storage::CONSUMER_IDX_CAP {
+            client.anchor(
+                &operator,
+                &consumer,
+                &(base + i),
+                &(base + i + 1),
+                &usage_root,
+                &10,
+                &token,
+                &1000i128,
+                &900i128,
+                &version,
+                &Protocol::X402,
+                &None,
+            );
+        }
+
+        let cap = crate::storage::CONSUMER_IDX_CAP;
+        let result = client.try_anchor(
+            &operator,
+            &consumer,
+            &(base + cap),
+            &(base + cap + 1),
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &version,
+            &Protocol::X402,
+            &None,
+        );
+        assert_eq!(result, Err(Ok(Error::IndexFull)));
+    }
 }
 
 mod merkle {
