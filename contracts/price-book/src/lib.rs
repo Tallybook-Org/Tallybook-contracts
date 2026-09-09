@@ -7,6 +7,7 @@ use soroban_sdk::{contract, contractimpl, Address, Env};
 mod error;
 mod event;
 mod storage;
+mod test;
 mod types;
 
 use error::Error;
