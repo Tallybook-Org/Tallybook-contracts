@@ -9,10 +9,13 @@ Settlement bookkeeping for services paid per request by machines.
 
 ## Live on testnet
 
-| Contract | Address | Wasm hash |
-|---|---|---|
-| `price_book` | `CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW` | `b5114557a95572057ad63e5131ea0e3618ad1f983caed42a1724da7c78eda94a` |
-| `statement_registry` | `CB75TTWGP3TLKEDGA2WOLEVCNKLUX6X5KS47GMWGBHUAVES7J55LY25M` | `cf10992a1eb272f9fb440ae74bce54b97136e0ae777afaaf82266dc37bed4d5a` |
+| Contract | Address | Wasm hash | Explorer |
+|---|---|---|---|
+| `price_book` | `CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW` | `b5114557a95572057ad63e5131ea0e3618ad1f983caed42a1724da7c78eda94a` | [stellar.expert](https://stellar.expert/explorer/testnet/contract/CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW) |
+| `statement_registry` | `CB75TTWGP3TLKEDGA2WOLEVCNKLUX6X5KS47GMWGBHUAVES7J55LY25M` | `cf10992a1eb272f9fb440ae74bce54b97136e0ae777afaaf82266dc37bed4d5a` | [stellar.expert](https://stellar.expert/explorer/testnet/contract/CB75TTWGP3TLKEDGA2WOLEVCNKLUX6X5KS47GMWGBHUAVES7J55LY25M) |
+
+**Neither contract has been audited, and both are deployed to testnet only. Do not use
+them with real funds — see [SECURITY.md](SECURITY.md).**
 
 ## The problem
 
@@ -64,7 +67,13 @@ on-chain part — two contracts, nothing else.
 
 ## Contracts
 
-### `price-book`
+The two crates in this repo are named `price-book` and `statement-registry`; the
+contracts they compile to are `price_book` and `statement_registry`. Crate names appear
+only in build commands below (`make build`, `cargo`/`stellar` `--package` flags) —
+everywhere else, including the section headers immediately below, refers to the
+contracts by their deployed names.
+
+### `price_book`
 
 An append-only, versioned record of what an operator charges and from when. Without it,
 the amounts in a statement are unfalsifiable — a buyer cannot distinguish an honest bill
@@ -97,7 +106,7 @@ on-chain.
 - **`version_at(operator: Address, ledger: u32) -> Result<u32, Error>`** — no auth,
   read-only. Returns which version of `operator`'s schedule was in force at `ledger`: the
   version with the highest `effective_ledger` not exceeding `ledger`. This is the
-  function `statement-registry` calls, and the function a buyer calls to check which
+  function `statement_registry` calls, and the function a buyer calls to check which
   prices applied on the day they were billed. Binary searches the operator's timeline
   rather than scanning every published version. Errors: `NotFound` if the timeline is
   empty or every entry's `effective_ledger` is after `ledger`.
@@ -106,7 +115,7 @@ on-chain.
 
 | Discriminant | Variant | Meaning |
 |---|---|---|
-| 1 | *(unused)* | Was `AlreadyInitialized`. Per [CAP-0058](https://stellar.org/protocol/cap-58), a contract's constructor is invoked exactly once, at creation, and is never callable again — the guard this occupied was unreachable on-chain, and the discriminant is left unused rather than renumbered. |
+| 1 | *(unused)* | Was `AlreadyInitialized`. Per [CAP-0058](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0058.md), a contract's constructor is invoked exactly once, at creation, and is never callable again — the guard this occupied was unreachable on-chain, and the discriminant is left unused rather than renumbered. |
 | 2 | `NotFound` | No such version, or operator has never published. |
 | 3 | `EffectiveInPast` | `effective_ledger` is before the current ledger. |
 | 4 | `EffectiveNotAfter` | `effective_ledger` does not strictly exceed the previous version's. |
@@ -117,11 +126,11 @@ on-chain.
 
 `publish` — topics `("price_book", "publish")`, data `(operator: Address, version: u32, schedule_hash: BytesN<32>, effective_ledger: u32)`.
 
-### `statement-registry`
+### `statement_registry`
 
 Anchors a billing period's statement so a buyer can verify one charge against it, check
 it against the price then in force, and contest it publicly if it is wrong. Reads
-`price-book` via a cross-contract call; the `price-book` address is set at construction
+`price_book` via a cross-contract call; the `price_book` address is set at construction
 and is immutable.
 
 #### Functions
@@ -130,7 +139,7 @@ and is immutable.
   both in instance storage. `admin` holds no power over operator data. `price_book` is
   immutable after construction — there is no setter. A mutable price book address would
   let an operator swap in a permissive registry and invalidate every historical
-  statement; if the price book must change, a new `statement-registry` is deployed.
+  statement; if the price book must change, a new `statement_registry` is deployed.
 
 - **`anchor(operator, consumer, period_start: u32, period_end: u32, usage_root: BytesN<32>, request_count: u64, token: Address, amount_billed: i128, amount_settled: i128, price_book_version: u32, protocol: Protocol, channel: Option<Address>) -> Result<u64, Error>`**
   — callable only by `operator`. Validates, in order: the period is non-empty and
@@ -138,7 +147,7 @@ and is immutable.
   non-zero; amounts are non-negative and `amount_settled <= amount_billed`; `channel` is
   present iff `protocol == MppSession`; and — the most important checks in this contract
   — that the price book agrees on **one** version for the whole period. This last check
-  is two live calls to `price-book`, not one: `version_at(period_start)` and
+  is two live calls to `price_book`, not one: `version_at(period_start)` and
   `version_at(period_end)` must agree with each other before either is compared against
   `price_book_version`. If the schedule changed partway through the period, the two
   calls disagree and the period is rejected outright with `PeriodSpansPriceChange` — no
@@ -198,12 +207,12 @@ and is immutable.
 
 | Discriminant | Variant | Meaning |
 |---|---|---|
-| 1 | *(unused)* | Was `AlreadyInitialized`, for the same reason and with the same fix as `price-book`'s — see above. |
+| 1 | *(unused)* | Was `AlreadyInitialized`, for the same reason and with the same fix as `price_book`'s — see above. |
 | 2 | `NotFound` | No such statement/dispute, or (for `open_dispute`) a real statement but the wrong consumer. |
 | 3 | `BadPeriod` | `period_start >= period_end`, or `period_end > current ledger`. |
 | 4 | `BadAmounts` | A negative amount, or `amount_settled > amount_billed`. |
 | 5 | `EmptyStatement` | `request_count == 0`. |
-| 6 | `PriceVersionUnknown` | `price-book` has no such version for this operator (or the cross-contract call itself failed). |
+| 6 | `PriceVersionUnknown` | `price_book` has no such version for this operator (or the cross-contract call itself failed). |
 | 7 | `PriceVersionStale` | `version_at(period_start)` and `version_at(period_end)` agree with each other, but not with the claimed `price_book_version`. |
 | 8 | `ChannelMismatch` | `channel` set without `MppSession`, or absent with it. |
 | 9 | `IndexFull` | `CONSUMER_IDX_CAP` (500) reached — see Known limitations. |
@@ -221,11 +230,11 @@ and is immutable.
 
 ## Known limitations
 
-`Timeline(operator)` — the sorted vector `price-book`'s `version_at()` binary-searches —
+`Timeline(operator)` — the sorted vector `price_book`'s `version_at()` binary-searches —
 is capped at **256 entries** (`TIMELINE_CAP`). `publish()` returns `TimelineFull` once an
 operator's 256th version would be appended.
 
-`ConsumerIdx(operator, consumer)` — the vector `statement-registry`'s `list_statements()`
+`ConsumerIdx(operator, consumer)` — the vector `statement_registry`'s `list_statements()`
 returns — is capped at **500 entries** (`CONSUMER_IDX_CAP`). `anchor()` returns
 `IndexFull` once a given (operator, consumer) pair's 500th statement would be appended.
 
@@ -241,29 +250,30 @@ summing SAC transfer and channel events for the period and flagging mismatches.
 
 ## Quick start
 
-1. Install Rust via [rustup](https://rustup.rs).
-2. Add the wasm target: `rustup target add wasm32v1-none`. This repo's own
+1. Clone the repo: `git clone https://github.com/Tallybook-Org/tallybook-contracts.git && cd tallybook-contracts`.
+2. Install Rust via [rustup](https://rustup.rs).
+3. Add the wasm target: `rustup target add wasm32v1-none`. This repo's own
    `rust-toolchain.toml` already lists it and installs it automatically the first time
    you run a cargo command in this directory, but you need it on any toolchain you drive
    by hand. Use `wasm32v1-none` throughout — never `wasm32-unknown-unknown`, which the
    Soroban runtime rejects and which isn't even supported for these contracts past
    Rust 1.82.
-3. Install the Stellar CLI: `cargo install --locked stellar-cli` (`28.0.0` or newer).
-4. Pick a network: `stellar network ls` shows the built-ins — `testnet`, `futurenet`,
-   `mainnet`, `local`. `testnet` has a default public RPC URL; `mainnet` needs your own
-   (see `scripts/deploy-mainnet.sh`).
-5. Set up an identity: `stellar keys generate <name> --fund --network testnet` creates
+4. Install the Stellar CLI: `cargo install --locked stellar-cli` (`28.0.0` or newer).
+5. Pick a network: `stellar network ls` shows the built-ins, in this order — `local`,
+   `futurenet`, `mainnet`, `testnet`. `testnet` has a default public RPC URL; `mainnet`
+   needs your own (see `scripts/deploy-mainnet.sh`).
+6. Set up an identity: `stellar keys generate <name> --fund --network testnet` creates
    and funds one on testnet in a single step; `stellar keys add <name>` imports an
    existing secret key instead. Never pass a secret key as a command-line argument
    beyond this local setup — this repo's own deploy scripts only ever read one from the
    environment or the keys store.
-6. Build: `make build` — builds `price-book`, then `statement-registry`, via
+7. Build: `make build` — builds `price-book`, then `statement-registry`, via
    `stellar contract build`. `statement-registry` contractimports `price-book`'s
    compiled wasm at compile time, so it cannot compile until that wasm exists on disk;
    `make build` (and CI) encode that ordering, but a bare `cargo test` or `cargo clippy`
    on a clean checkout needs `make build` (or at least
    `stellar contract build --package price-book`) run first.
-7. Test: `make test`. Format and lint: `make fmt` / `make clippy`.
+8. Test: `make test`. Format and lint: `make fmt` / `make clippy`.
 
 ## Maintainers
 
