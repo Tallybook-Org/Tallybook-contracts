@@ -6,6 +6,11 @@ Settlement bookkeeping for services paid per request by machines.
 [![Stellar](https://img.shields.io/badge/Stellar-network-7D00FF)](https://stellar.org)
 [![Soroban](https://img.shields.io/badge/Soroban-smart%20contracts-000000)](https://soroban.stellar.org)
 [![CI](https://github.com/Tallybook-Org/tallybook-contracts/actions/workflows/ci.yml/badge.svg)](https://github.com/Tallybook-Org/tallybook-contracts/actions/workflows/ci.yml)
+[![docs](https://github.com/Tallybook-Org/tallybook-contracts/actions/workflows/docs.yml/badge.svg)](https://tallybook-org.github.io/tallybook-contracts/)
+
+**[Read the docs](https://tallybook-org.github.io/tallybook-contracts/)** for the
+full protocol explanation, contract reference, and guides — this README covers the
+essentials; the docs site covers everything.
 
 ## Live on testnet
 
