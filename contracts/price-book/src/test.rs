@@ -167,4 +167,33 @@ mod publish {
         );
         assert_eq!(result, Err(Ok(Error::TimelineFull)));
     }
+
+    #[test]
+    fn unauthorized_caller_is_rejected() {
+        use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+
+        let (env, contract_id, _admin) = setup();
+        let client = PriceBookClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let attacker = Address::generate(&env);
+        let hash = schedule_hash(&env, 1);
+        let uri = String::from_str(&env, "https://example.com/schedule.json");
+        let current_ledger = env.ledger().sequence();
+
+        // Authorize attacker, not operator — publish() requires
+        // operator.require_auth(), so this must fail even though *some*
+        // valid auth entry is present.
+        env.mock_auths(&[MockAuth {
+            address: &attacker,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "publish",
+                args: (operator.clone(), hash.clone(), uri.clone(), current_ledger).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+
+        let result = client.try_publish(&operator, &hash, &uri, &current_ledger);
+        assert!(result.is_err());
+    }
 }
