@@ -4,7 +4,7 @@
 // for building throwaway data like the leaf array below.
 extern crate std;
 
-use soroban_sdk::{testutils::Address as _, Address, Bytes, BytesN, Env};
+use soroban_sdk::{testutils::Address as _, Address, Bytes, BytesN, Env, String};
 
 use crate::{Error, StatementRegistry};
 
@@ -30,6 +30,22 @@ fn setup() -> (Env, Address, Address, Address) {
     let price_book_id = env.register(crate::price_book::WASM, (price_book_admin,));
     let contract_id = env.register(StatementRegistry, (admin.clone(), price_book_id.clone()));
     (env, contract_id, admin, price_book_id)
+}
+
+/// Publishes a price schedule for `operator`, effective immediately at
+/// `effective_ledger`, against the real price_book at `price_book_id`, and
+/// returns the resulting version number. Caller must have already
+/// authorized `operator` (e.g. via `env.mock_all_auths()`).
+fn publish_schedule(
+    env: &Env,
+    price_book_id: &Address,
+    operator: &Address,
+    effective_ledger: u32,
+) -> u32 {
+    let client = crate::price_book::Client::new(env, price_book_id);
+    let schedule_hash = BytesN::from_array(env, &[1u8; 32]);
+    let uri = String::from_str(env, "https://example.com/schedule.json");
+    client.publish(operator, &schedule_hash, &uri, &effective_ledger)
 }
 
 mod constructor {
@@ -60,6 +76,106 @@ mod constructor {
             StatementRegistry::__constructor(env.clone(), admin.clone(), price_book_id.clone())
         });
         assert_eq!(result, Err(Error::AlreadyInitialized));
+    }
+}
+
+mod anchor {
+    use soroban_sdk::testutils::{Events as _, Ledger as _};
+    use soroban_sdk::Event as _;
+
+    use crate::event::AnchorEvent;
+    use crate::types::Protocol;
+    use crate::StatementRegistryClient;
+
+    use super::*;
+
+    #[test]
+    fn happy_path_returns_incrementing_seq() {
+        let (env, contract_id, _admin, price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+
+        let base = env.ledger().sequence();
+        let version = publish_schedule(&env, &price_book_id, &operator, base);
+        env.ledger().set_sequence_number(base + 100);
+
+        let seq1 = client.anchor(
+            &operator,
+            &consumer,
+            &base,
+            &(base + 50),
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &version,
+            &Protocol::X402,
+            &None,
+        );
+        assert_eq!(seq1, 1);
+
+        let seq2 = client.anchor(
+            &operator,
+            &consumer,
+            &(base + 50),
+            &(base + 90),
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &version,
+            &Protocol::X402,
+            &None,
+        );
+        assert_eq!(seq2, 2);
+    }
+
+    #[test]
+    fn happy_path_emits_anchor_event() {
+        let (env, contract_id, _admin, price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+
+        let base = env.ledger().sequence();
+        let version = publish_schedule(&env, &price_book_id, &operator, base);
+        env.ledger().set_sequence_number(base + 100);
+
+        let seq = client.anchor(
+            &operator,
+            &consumer,
+            &base,
+            &(base + 50),
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &version,
+            &Protocol::X402,
+            &None,
+        );
+
+        let expected = AnchorEvent {
+            operator,
+            consumer,
+            seq,
+            usage_root,
+            amount_billed: 1000,
+            amount_settled: 900,
+            protocol: Protocol::X402,
+        }
+        .to_xdr(&env, &contract_id);
+        assert_eq!(env.events().all(), std::vec![expected]);
     }
 }
 
