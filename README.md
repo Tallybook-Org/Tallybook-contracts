@@ -1,56 +1,94 @@
-# Tallybook-contracts
-Tallybook is settlement bookkeeping for services that charge per HTTP request - APIs paid by AI agents and other machines over Stellar, using the x402 protocol, MPP charge mode, or MPP payment channels.
+# Tallybook
 
-## Build
+Settlement bookkeeping for services paid per request by machines.
 
-This repo contains two contracts: `price-book` has no dependencies; `statement-registry`
-imports `price-book`'s compiled wasm at compile time (via `contractimport!`), so
-`price-book` must be built first.
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Stellar](https://img.shields.io/badge/Stellar-network-7D00FF)](https://stellar.org)
+[![Soroban](https://img.shields.io/badge/Soroban-smart%20contracts-000000)](https://soroban.stellar.org)
+[![CI](https://github.com/Tallybook-Org/tallybook-contracts/actions/workflows/ci.yml/badge.svg)](https://github.com/Tallybook-Org/tallybook-contracts/actions/workflows/ci.yml)
 
-```sh
-make build   # builds price-book, then statement-registry, via `stellar contract build`
-make test    # cargo test --workspace
-make fmt     # cargo fmt --all
-make clippy  # cargo clippy --workspace --all-targets -- -D warnings
-```
+## Live on testnet
 
-**On a clean checkout, run `make build` (or at least
-`stellar contract build --package price-book`) before `cargo test` or `cargo clippy`.**
-`statement-registry/src/price_book.rs` contractimports
-`target/wasm32v1-none/release/price_book.wasm` unconditionally, so `statement-registry`
-cannot even compile — for a test run, a clippy pass, or an IDE's background check — until
-that file exists on disk. This is a real compile-time dependency, not just a build-order
-nicety; `make build` and CI both encode it, but a bare `cargo test` on a fresh clone will
-fail with a file-not-found error from the `contractimport!` macro until you build price-book
-at least once.
+| Contract | Address | Wasm hash |
+|---|---|---|
+| `price_book` | `CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW` | `b5114557a95572057ad63e5131ea0e3618ad1f983caed42a1724da7c78eda94a` |
+| `statement_registry` | `CB75TTWGP3TLKEDGA2WOLEVCNKLUX6X5KS47GMWGBHUAVES7J55LY25M` | `cf10992a1eb272f9fb440ae74bce54b97136e0ae777afaaf82266dc37bed4d5a` |
 
-Contracts are built exclusively with `stellar contract build`, targeting `wasm32v1-none` —
-never with `cargo build`.
+## The problem
 
-## `price-book`
+Machine-paid APIs settle three different ways today, and none of the three leaves the
+buyer with something they can check.
 
-An append-only, versioned record of what an operator charges and from when. Without it, the
-amounts in a statement are unfalsifiable — a buyer cannot distinguish an honest bill from a
-retroactively raised price. The full price schedule (endpoints, units, per-unit prices) lives
-off-chain as canonical JSON; only its `sha256` hash and its location go on-chain.
+x402 settles per request against a signed authorization entry. MPP charge mode settles
+per request as a direct SAC transfer. MPP session mode settles a whole channel at once,
+against commitments the payer and payee exchange off-chain as the channel progresses.
+In the first two, the receipt is just "a transfer happened" — nothing on-chain says what
+it was for or whether the price was right. In session mode it's worse: the seller's
+revenue is a signature sitting in their own database until someone submits it.
 
-### Functions
+That has a sharp failure mode. A payment channel has a funder-controlled refund window.
+If it expires before the latest commitment is swept into the channel contract, the
+funder's refund claims back the entire remaining balance — including amounts the
+recipient already earned by serving requests, if nobody got a signature on-chain in
+time. Money the recipient billed for and delivered on can revert to the payer through no
+fault on either side.
 
-- **`__constructor(admin: Address)`** — deploy-time only. Stores `admin` in instance storage.
-  `admin` holds no power over operator data — it cannot publish, edit, or remove a version. It
-  exists only as a documented owner for future rent funding; there is no admin-gated function
-  anywhere in this contract.
+Two other projects sit near this problem, and it's worth naming them rather than
+blurring what each one does. OpenZeppelin's facilitator handles settlement — moving the
+money for x402 payments. RouteDock handles execution and routing — getting a request to
+the right paid endpoint. Tallybook does neither. It does the books: an on-chain,
+merkle-rooted record of what was billed and at what price, so a buyer can check one line
+item against it without trusting the seller's own database.
+
+## How it works
+
+The full Tallybook system has off-chain and on-chain parts. This repository is the
+on-chain part — two contracts, nothing else.
+
+1. **Meter.** An off-chain collector counts requests and prices them against the
+   operator's published schedule. This stays off-chain: at $0.01 a request, a
+   per-request ledger write costs more than the request earns.
+2. **Custody commitments.** For MPP session mode, an off-chain custodian holds the
+   signed channel commitments as they arrive.
+3. **Sweep before the refund window.** The custodian submits the latest commitment to
+   the payment channel contract before the funder's refund window closes, so accrued
+   revenue is claimed instead of reverting in a refund. Tallybook consumes the existing
+   `stellar-experimental/one-way-channel` contract for this — it isn't forked, vendored,
+   or reimplemented here.
+4. **Anchor statements.** When a billing period closes, the collector merkle-roots the
+   period's usage records and anchors the statement in `statement_registry`, tied to the
+   exact `price_book` version in force for that period. This is where this repo starts.
+5. **Verify.** A buyer takes one line off an invoice and checks it against the anchored
+   root with `verify_usage` — no need to trust the seller's off-chain books. If a charge
+   looks wrong, `open_dispute` puts that in public view too.
+
+## Contracts
+
+### `price-book`
+
+An append-only, versioned record of what an operator charges and from when. Without it,
+the amounts in a statement are unfalsifiable — a buyer cannot distinguish an honest bill
+from a retroactively raised price. The full price schedule (endpoints, units, per-unit
+prices) lives off-chain as canonical JSON; only its `sha256` hash and its location go
+on-chain.
+
+#### Functions
+
+- **`__constructor(admin: Address)`** — deploy-time only. Stores `admin` in instance
+  storage. `admin` holds no power over operator data — it cannot publish, edit, or remove
+  a version. It exists only as a documented owner for future rent funding; there is no
+  admin-gated function anywhere in this contract.
 
 - **`publish(operator: Address, schedule_hash: BytesN<32>, uri: String, effective_ledger: u32) -> Result<u32, Error>`**
-  — callable only by `operator`. Publishes a new price schedule version. Schedules must move
-  strictly forward in time: `effective_ledger` may equal the current ledger (effective
-  immediately) but not precede it, and must strictly exceed the previous version's
-  `effective_ledger` if one exists. `uri` must be at most 200 bytes. Returns the new version
-  number (the first published version is `1`).
+  — callable only by `operator`. Publishes a new price schedule version. Schedules must
+  move strictly forward in time: `effective_ledger` may equal the current ledger
+  (effective immediately) but not precede it, and must strictly exceed the previous
+  version's `effective_ledger` if one exists. `uri` must be at most 200 bytes. Returns
+  the new version number (the first published version is `1`).
   Errors: `UriTooLong`, `EffectiveInPast`, `EffectiveNotAfter`, `TimelineFull`.
 
-- **`get_version(operator: Address, version: u32) -> Result<PriceBookVersion, Error>`** — no
-  auth, read-only. Errors: `NotFound`.
+- **`get_version(operator: Address, version: u32) -> Result<PriceBookVersion, Error>`** —
+  no auth, read-only. Errors: `NotFound`.
 
 - **`latest(operator: Address) -> Result<u32, Error>`** — no auth, read-only. The latest
   version number `operator` has published. Errors: `NotFound` if `operator` has never
@@ -58,13 +96,13 @@ off-chain as canonical JSON; only its `sha256` hash and its location go on-chain
 
 - **`version_at(operator: Address, ledger: u32) -> Result<u32, Error>`** — no auth,
   read-only. Returns which version of `operator`'s schedule was in force at `ledger`: the
-  version with the highest `effective_ledger` not exceeding `ledger`. This is the function
-  `statement-registry` calls, and the function a buyer calls to check which prices applied on
-  the day they were billed. Binary searches the operator's timeline rather than scanning every
-  published version. Errors: `NotFound` if the timeline is empty or every entry's
-  `effective_ledger` is after `ledger`.
+  version with the highest `effective_ledger` not exceeding `ledger`. This is the
+  function `statement-registry` calls, and the function a buyer calls to check which
+  prices applied on the day they were billed. Binary searches the operator's timeline
+  rather than scanning every published version. Errors: `NotFound` if the timeline is
+  empty or every entry's `effective_ledger` is after `ledger`.
 
-### Errors
+#### Errors
 
 | Discriminant | Variant | Meaning |
 |---|---|---|
@@ -75,92 +113,88 @@ off-chain as canonical JSON; only its `sha256` hash and its location go on-chain
 | 5 | `TimelineFull` | `TIMELINE_CAP` (256) reached — see Known limitations. |
 | 6 | `UriTooLong` | `uri` exceeds 200 bytes. |
 
-### Events
+#### Events
 
 `publish` — topics `("price_book", "publish")`, data `(operator: Address, version: u32, schedule_hash: BytesN<32>, effective_ledger: u32)`.
 
-### Known limitations
+### `statement-registry`
 
-`Timeline(operator)` — the sorted vector `version_at()` binary-searches — is capped at
-**256 entries** (`TIMELINE_CAP`). `publish()` returns `TimelineFull` once an operator's
-256th version would be appended. This is a deliberate, documented limit, not a hidden one:
-an operator who needs more than 256 price changes over the life of a deployment needs a new
-`price-book` deployment (or a design change to this contract), not an unbounded vector.
+Anchors a billing period's statement so a buyer can verify one charge against it, check
+it against the price then in force, and contest it publicly if it is wrong. Reads
+`price-book` via a cross-contract call; the `price-book` address is set at construction
+and is immutable.
 
-## `statement-registry`
+#### Functions
 
-Anchors a billing period's statement so a buyer can verify one charge against it, check it
-against the price then in force, and contest it publicly if it is wrong. Reads `price-book`
-via a cross-contract call; the `price-book` address is set at construction and is immutable.
-
-### Functions
-
-- **`__constructor(admin: Address, price_book: Address)`** — deploy-time only. Stores both in
-  instance storage. `admin` holds no power over operator data. `price_book` is immutable
-  after construction — there is no setter. A mutable price book address would let an operator
-  swap in a permissive registry and invalidate every historical statement; if the price book
-  must change, a new `statement-registry` is deployed.
+- **`__constructor(admin: Address, price_book: Address)`** — deploy-time only. Stores
+  both in instance storage. `admin` holds no power over operator data. `price_book` is
+  immutable after construction — there is no setter. A mutable price book address would
+  let an operator swap in a permissive registry and invalidate every historical
+  statement; if the price book must change, a new `statement-registry` is deployed.
 
 - **`anchor(operator, consumer, period_start: u32, period_end: u32, usage_root: BytesN<32>, request_count: u64, token: Address, amount_billed: i128, amount_settled: i128, price_book_version: u32, protocol: Protocol, channel: Option<Address>) -> Result<u64, Error>`**
-  — callable only by `operator`. Validates, in order: the period is non-empty and already
-  finished (`period_start < period_end <= current ledger`); `request_count` is non-zero;
-  amounts are non-negative and `amount_settled <= amount_billed`; `channel` is present iff
-  `protocol == MppSession`; and — the most important checks in this contract — that the price
-  book agrees on **one** version for the whole period. This last check is two live calls to
-  `price-book`, not one: `version_at(period_start)` and `version_at(period_end)` must agree
-  with each other before either is compared against `price_book_version`. If the schedule
-  changed partway through the period, the two calls disagree and the period is rejected
-  outright with `PeriodSpansPriceChange` — no single version honestly covers a statement
-  whose window straddles a price change, no matter what the caller claims. Only once the
-  period is confirmed to sit inside one version's window is that version compared against
-  `price_book_version`; a mismatch there is `PriceVersionStale`. Returns the new sequence
-  number for `operator` (the first anchor is `1`).
+  — callable only by `operator`. Validates, in order: the period is non-empty and
+  already finished (`period_start < period_end <= current ledger`); `request_count` is
+  non-zero; amounts are non-negative and `amount_settled <= amount_billed`; `channel` is
+  present iff `protocol == MppSession`; and — the most important checks in this contract
+  — that the price book agrees on **one** version for the whole period. This last check
+  is two live calls to `price-book`, not one: `version_at(period_start)` and
+  `version_at(period_end)` must agree with each other before either is compared against
+  `price_book_version`. If the schedule changed partway through the period, the two
+  calls disagree and the period is rejected outright with `PeriodSpansPriceChange` — no
+  single version honestly covers a statement whose window straddles a price change, no
+  matter what the caller claims. Only once the period is confirmed to sit inside one
+  version's window is that version compared against `price_book_version`; a mismatch
+  there is `PriceVersionStale`. Returns the new sequence number for `operator` (the
+  first anchor is `1`).
   Errors: `BadPeriod`, `EmptyStatement`, `BadAmounts`, `ChannelMismatch`,
   `PriceVersionUnknown`, `PeriodSpansPriceChange`, `PriceVersionStale`, `IndexFull`.
 
 - **`verify_usage(operator, seq: u64, leaf: BytesN<32>, proof: Vec<BytesN<32>>) -> Result<bool, Error>`**
-  — no auth; anyone can verify a charge against a statement, and that is the whole point.
-  Folds `leaf` up through `proof` via sorted-pair merkle hashing and compares the result
-  against the statement's `usage_root`. Returns `Ok(false)` — not an error — for a
-  valid-shaped proof that does not reach the root; errors are reserved for malformed input.
-  Errors: `ProofTooLong` if `proof` has more than `MAX_PROOF_NODES` (32) entries, `NotFound`
-  if no such statement exists.
+  — no auth; anyone can verify a charge against a statement, and that is the whole
+  point. Folds `leaf` up through `proof` via sorted-pair merkle hashing and compares the
+  result against the statement's `usage_root`. Returns `Ok(false)` — not an error — for
+  a valid-shaped proof that does not reach the root; errors are reserved for malformed
+  input.
+  Errors: `ProofTooLong` if `proof` has more than `MAX_PROOF_NODES` (32) entries,
+  `NotFound` if no such statement exists.
 
 - **`open_dispute(operator, seq: u64, consumer: Address, reason_hash: BytesN<32>) -> Result<(), Error>`**
-  — callable only by the statement's `consumer`. `consumer` must match the statement's own
-  `consumer` field — a mismatch returns `NotFound`, the same error as a missing statement, so
-  a party unrelated to a statement cannot learn whether it exists. Sets the statement's status
-  to `Disputed` and records the dispute.
+  — callable only by the statement's `consumer`. `consumer` must match the statement's
+  own `consumer` field — a mismatch returns `NotFound`, the same error as a missing
+  statement, so a party unrelated to a statement cannot learn whether it exists. Sets
+  the statement's status to `Disputed` and records the dispute.
   Errors: `NotFound`, `NotAnchored` if the statement is not currently `Anchored`.
 
 - **`resolve_dispute(operator, seq: u64, resolution_hash: BytesN<32>, amount_credited: i128) -> Result<(), Error>`**
-  — requires **both** parties' auth, `operator` first, then the statement's `consumer`. There
-  is deliberately no arbiter, no admin override, and no timeout that auto-resolves in the
-  operator's favour — if the two sides never agree, the statement stays publicly `Disputed`
-  forever, and that public mark is the entire enforcement mechanism.
+  — requires **both** parties' auth, `operator` first, then the statement's `consumer`.
+  There is deliberately no arbiter, no admin override, and no timeout that
+  auto-resolves in the operator's favour — if the two sides never agree, the statement
+  stays publicly `Disputed` forever, and that public mark is the entire enforcement
+  mechanism.
   Errors: `NotFound`, `NotDisputed` if the statement is not currently `Disputed`,
   `CreditTooLarge` if `amount_credited` is negative or exceeds the statement's
   `amount_billed`.
 
-- **`get_statement(operator, seq: u64) -> Result<Statement, Error>`** — no auth, read-only.
-  Errors: `NotFound`.
+- **`get_statement(operator, seq: u64) -> Result<Statement, Error>`** — no auth,
+  read-only. Errors: `NotFound`.
 
-- **`list_statements(operator, consumer) -> Result<Vec<u64>, Error>`** — no auth, read-only.
-  Sequence numbers anchored for the pair, oldest first, newest last. An empty result means no
-  statements exist for the pair; that is not an error.
+- **`list_statements(operator, consumer) -> Result<Vec<u64>, Error>`** — no auth,
+  read-only. Sequence numbers anchored for the pair, oldest first, newest last. An empty
+  result means no statements exist for the pair; that is not an error.
 
 - **`get_dispute(operator, seq: u64) -> Result<Dispute, Error>`** — no auth, read-only.
   Errors: `NotFound` if no dispute has been opened.
 
-- **`extend_statement_ttl(operator, seq: u64, ledgers: u32) -> Result<(), Error>`** — **no
-  auth, intentionally.** Anyone may pay rent to keep an audit record alive — an auditor
-  checking a three-year-old statement is not a party to it and was never going to be able to
-  authenticate as one; requiring auth here would just make old records unrecoverable once
-  their original parties are unreachable. Extends the TTL of the statement, and its dispute if
-  one exists, out to `ledgers` from now, clamped to a sane maximum. Do not "fix" this function
-  by adding auth. Errors: `NotFound` if no such statement exists.
+- **`extend_statement_ttl(operator, seq: u64, ledgers: u32) -> Result<(), Error>`** —
+  **no auth, intentionally.** Anyone may pay rent to keep an audit record alive — an
+  auditor checking a three-year-old statement is not a party to it and was never going
+  to be able to authenticate as one; requiring auth here would just make old records
+  unrecoverable once their original parties are unreachable. Extends the TTL of the
+  statement, and its dispute if one exists, out to `ledgers` from now, clamped to a sane
+  maximum. Errors: `NotFound` if no such statement exists.
 
-### Errors
+#### Errors
 
 | Discriminant | Variant | Meaning |
 |---|---|---|
@@ -179,23 +213,71 @@ via a cross-contract call; the `price-book` address is set at construction and i
 | 13 | `ProofTooLong` | A merkle proof longer than `MAX_PROOF_NODES` (32). |
 | 14 | `PeriodSpansPriceChange` | `version_at(period_start) != version_at(period_end)`: the schedule changed partway through the period, so no single `price_book_version` honestly covers the whole thing. Distinct from `PriceVersionStale`, which is about the claimed version not matching what's in force — this is about the period itself straddling a change, independent of what was claimed. |
 
-### Events
+#### Events
 
 - `anchor` — topics `("statement", "anchor")`, data `(operator: Address, consumer: Address, seq: u64, usage_root: BytesN<32>, amount_billed: i128, amount_settled: i128, protocol: Protocol)`.
 - `dispute` — topics `("statement", "dispute")`, data `(operator: Address, consumer: Address, seq: u64, reason_hash: BytesN<32>)`.
 - `resolve` — topics `("statement", "resolve")`, data `(operator: Address, consumer: Address, seq: u64, resolution_hash: BytesN<32>, amount_credited: i128)`.
 
-### Known limitations
+## Known limitations
 
-`ConsumerIdx(operator, consumer)` — the vector `list_statements()` returns — is capped at
-**500 entries** (`CONSUMER_IDX_CAP`). `anchor()` returns `IndexFull` once a given
-(operator, consumer) pair's 500th statement would be appended. A merkle proof passed to
-`verify_usage()` is capped at **32 nodes** (`MAX_PROOF_NODES`), which covers over 4 billion
-leaves; longer proofs are rejected with `ProofTooLong` rather than accepted unbounded. Both
-are deliberate, documented limits.
+`Timeline(operator)` — the sorted vector `price-book`'s `version_at()` binary-searches —
+is capped at **256 entries** (`TIMELINE_CAP`). `publish()` returns `TimelineFull` once an
+operator's 256th version would be appended.
 
-### `amount_settled`
+`ConsumerIdx(operator, consumer)` — the vector `statement-registry`'s `list_statements()`
+returns — is capped at **500 entries** (`CONSUMER_IDX_CAP`). `anchor()` returns
+`IndexFull` once a given (operator, consumer) pair's 500th statement would be appended.
+
+A merkle proof passed to `verify_usage()` is capped at **32 nodes**
+(`MAX_PROOF_NODES`), which covers over 4 billion leaves; longer proofs are rejected
+with `ProofTooLong` rather than accepted unbounded.
+
+All three are deliberate, documented limits, not hidden ones.
 
 `amount_settled` is the operator's unverifiable claim. The contract cannot check it and
-must not pretend to. What makes it meaningful is an off-chain indexer independently summing
-SAC transfer and channel events for the period and flagging mismatches.
+must not pretend to. What makes it meaningful is an off-chain indexer independently
+summing SAC transfer and channel events for the period and flagging mismatches.
+
+## Quick start
+
+1. Install Rust via [rustup](https://rustup.rs).
+2. Add the wasm target: `rustup target add wasm32v1-none`. This repo's own
+   `rust-toolchain.toml` already lists it and installs it automatically the first time
+   you run a cargo command in this directory, but you need it on any toolchain you drive
+   by hand. Use `wasm32v1-none` throughout — never `wasm32-unknown-unknown`, which the
+   Soroban runtime rejects and which isn't even supported for these contracts past
+   Rust 1.82.
+3. Install the Stellar CLI: `cargo install --locked stellar-cli` (`28.0.0` or newer).
+4. Pick a network: `stellar network ls` shows the built-ins — `testnet`, `futurenet`,
+   `mainnet`, `local`. `testnet` has a default public RPC URL; `mainnet` needs your own
+   (see `scripts/deploy-mainnet.sh`).
+5. Set up an identity: `stellar keys generate <name> --fund --network testnet` creates
+   and funds one on testnet in a single step; `stellar keys add <name>` imports an
+   existing secret key instead. Never pass a secret key as a command-line argument
+   beyond this local setup — this repo's own deploy scripts only ever read one from the
+   environment or the keys store.
+6. Build: `make build` — builds `price-book`, then `statement-registry`, via
+   `stellar contract build`. `statement-registry` contractimports `price-book`'s
+   compiled wasm at compile time, so it cannot compile until that wasm exists on disk;
+   `make build` (and CI) encode that ordering, but a bare `cargo test` or `cargo clippy`
+   on a clean checkout needs `make build` (or at least
+   `stellar contract build --package price-book`) run first.
+7. Test: `make test`. Format and lint: `make fmt` / `make clippy`.
+
+## Maintainers
+
+| Name | Role | GitHub | Telegram |
+|---|---|---|---|
+| Cisco | Maintainer | [@ciscokwiz](https://github.com/ciscokwiz) | TODO |
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, coding standards, and
+testing conventions. Issues labeled
+[`good first issue`](https://github.com/Tallybook-Org/tallybook-contracts/labels/good%20first%20issue)
+are a reasonable place to start.
+
+## Contributors
+
+[![Contributors](https://contrib.rocks/image?repo=Tallybook-Org/tallybook-contracts)](https://github.com/Tallybook-Org/tallybook-contracts/graphs/contributors)
