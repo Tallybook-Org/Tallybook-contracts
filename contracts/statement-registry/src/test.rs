@@ -698,6 +698,152 @@ mod anchor {
     }
 }
 
+mod verify_usage {
+    use serde_json::Value;
+    use soroban_sdk::testutils::Ledger as _;
+    use soroban_sdk::vec;
+
+    use crate::types::Protocol;
+    use crate::StatementRegistryClient;
+
+    use super::*;
+
+    fn hex_to_bytesn(env: &Env, hex: &str) -> BytesN<32> {
+        let mut bytes = [0u8; 32];
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap();
+        }
+        BytesN::from_array(env, &bytes)
+    }
+
+    /// Anchors a minimal, otherwise-valid statement with `usage_root` and
+    /// returns (Env, contract_id, operator, seq) for verify_usage calls
+    /// against it.
+    fn anchor_with_usage_root(usage_root: &BytesN<32>) -> (Env, Address, Address, u64) {
+        let env = usage_root.env().clone();
+        let admin = Address::generate(&env);
+        let price_book_admin = Address::generate(&env);
+        let price_book_id = env.register(crate::price_book::WASM, (price_book_admin,));
+        let contract_id = env.register(StatementRegistry, (admin, price_book_id.clone()));
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+
+        let base = env.ledger().sequence();
+        let version = publish_schedule(&env, &price_book_id, &operator, base);
+        env.ledger().set_sequence_number(base + 100);
+
+        let seq = client.anchor(
+            &operator,
+            &consumer,
+            &base,
+            &(base + 50),
+            usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &version,
+            &Protocol::X402,
+            &None,
+        );
+        (env, contract_id, operator, seq)
+    }
+
+    fn assert_fixture_verifies(json: &str) {
+        // hex_to_bytesn needs an Env before anchor_with_usage_root's own
+        // setup exists, so build one just to parse the root — BytesN
+        // values built against it are then handed into
+        // anchor_with_usage_root, which reuses that same Env throughout.
+        let env = Env::default();
+        let parsed: Value = serde_json::from_str(json).unwrap();
+        let usage_root = hex_to_bytesn(&env, parsed["root"].as_str().unwrap());
+
+        let (env, contract_id, operator, seq) = anchor_with_usage_root(&usage_root);
+        let client = StatementRegistryClient::new(&env, &contract_id);
+
+        for entry in parsed["proofs"].as_array().unwrap() {
+            let leaf = hex_to_bytesn(&env, entry["leaf"].as_str().unwrap());
+            let mut proof = vec![&env];
+            for node in entry["proof"].as_array().unwrap() {
+                proof.push_back(hex_to_bytesn(&env, node.as_str().unwrap()));
+            }
+            assert!(client.verify_usage(&operator, &seq, &leaf, &proof));
+        }
+    }
+
+    #[test]
+    fn single_leaf_fixture_verifies() {
+        assert_fixture_verifies(include_str!("../../../fixtures/merkle/single-leaf.json"));
+    }
+
+    #[test]
+    fn four_leaves_fixture_verifies() {
+        assert_fixture_verifies(include_str!("../../../fixtures/merkle/four-leaves.json"));
+    }
+
+    #[test]
+    fn seven_leaves_fixture_verifies() {
+        assert_fixture_verifies(include_str!("../../../fixtures/merkle/seven-leaves.json"));
+    }
+
+    #[test]
+    fn corrupted_proof_returns_false_not_error() {
+        let env = Env::default();
+        let parsed: Value =
+            serde_json::from_str(include_str!("../../../fixtures/merkle/four-leaves.json"))
+                .unwrap();
+        let usage_root = hex_to_bytesn(&env, parsed["root"].as_str().unwrap());
+
+        let (env, contract_id, operator, seq) = anchor_with_usage_root(&usage_root);
+        let client = StatementRegistryClient::new(&env, &contract_id);
+
+        let entry = &parsed["proofs"][0];
+        let leaf = hex_to_bytesn(&env, entry["leaf"].as_str().unwrap());
+        let mut proof = vec![&env];
+        for (i, node) in entry["proof"].as_array().unwrap().iter().enumerate() {
+            let mut node_bytes = hex_to_bytesn(&env, node.as_str().unwrap()).to_array();
+            if i == 0 {
+                node_bytes[0] ^= 0xff;
+            }
+            proof.push_back(BytesN::from_array(&env, &node_bytes));
+        }
+
+        assert!(!client.verify_usage(&operator, &seq, &leaf, &proof));
+    }
+
+    #[test]
+    fn not_found_for_missing_statement() {
+        let (env, contract_id, _admin, _price_book_id) = setup();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let leaf = BytesN::from_array(&env, &[1u8; 32]);
+
+        let result = client.try_verify_usage(&operator, &1, &leaf, &vec![&env]);
+        assert_eq!(result, Err(Ok(Error::NotFound)));
+    }
+
+    #[test]
+    fn proof_too_long_is_rejected() {
+        let (env, contract_id, _admin, _price_book_id) = setup();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let leaf = BytesN::from_array(&env, &[1u8; 32]);
+
+        let mut proof = vec![&env];
+        for i in 0..(crate::storage::MAX_PROOF_NODES + 1) {
+            proof.push_back(BytesN::from_array(&env, &[i as u8; 32]));
+        }
+
+        // No statement needs to exist: ProofTooLong is checked before the
+        // storage lookup.
+        let result = client.try_verify_usage(&operator, &1, &leaf, &proof);
+        assert_eq!(result, Err(Ok(Error::ProofTooLong)));
+    }
+}
+
 mod merkle {
     use soroban_sdk::vec;
 
