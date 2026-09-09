@@ -129,7 +129,7 @@ These are verified as current. Pin them.
 |---|---|
 | `soroban-sdk` | `27.0.6` — pinned exactly, `=27.0.6`. Do NOT use `28.0.0-rc.1`; it is a prerelease |
 | Rust edition | `2021` |
-| Rust toolchain | `1.84.0` minimum, set in `rust-toolchain.toml` |
+| Rust toolchain | Build pin `1.98.1`; MSRV floor `1.91.0`. 1.91.0 is `soroban-sdk` 27.0.6's declared `rust-version`; 1.98.1 is the stable release this project is developed and tested against. Pin an exact version in `rust-toolchain.toml`, never `stable` |
 | Build target | `wasm32v1-none` — the only wasm target the Soroban runtime supports |
 | `stellar-cli` | `28.0.0` or newer |
 | Build command | `stellar contract build` |
@@ -140,16 +140,55 @@ supported on Rust 1.82+ because it enables wasm features the Soroban runtime rej
 `stellar contract build`, which targets `wasm32v1-none` and applies the required settings.
 `cargo test` is correct for tests; `cargo clippy` and `cargo fmt` are correct for lints.
 
+### Toolchain pin
+
+`rust-toolchain.toml`, at the repository root:
+
+```toml
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32v1-none"]
+profile = "minimal"
+```
+
+Do not use the string `"stable"`. A floating channel means a Rust release six weeks from now
+silently changes the build and CI stops matching a contributor's machine. Declaring
+`targets` here makes `rustup` install `wasm32v1-none` automatically on clone, so nobody has
+to run `rustup target add` by hand.
+
+**Two different numbers, on purpose.** `rust-toolchain.toml` pins 1.98.1 — the exact stable
+this project is built and tested against. `rust-version` in `[workspace.package]` declares
+1.91.0 — the oldest compiler the code is claimed to support. They are not the same thing and
+must not be collapsed into one value: the pin makes builds reproducible, the floor tells a
+contributor on an older toolchain whether they can compile at all. The pin must always be
+greater than or equal to the floor.
+
+**Why the floor is 1.91.0 and not 1.84.0.** Three constraints, and only the highest binds:
+
+- `wasm32v1-none` first exists as a compilation target in Rust 1.84. That is a floor for the
+  target, not for the SDK.
+- `soroban-sdk` 27.0.6 declares `rust-version = "1.91.0"` in its own manifest (verified on
+  crates.io; 26.1.1 declares the same).
+- Transitive dependencies push in the same direction — `block-buffer` 0.11.0 and 0.12.1 are
+  edition 2024 and declare `rust-version = "1.85"`, so a 1.84 toolchain fails to even parse
+  their manifests.
+
+Building on 1.84 fails on the `block-buffer` manifest first and would fail on the SDK's own
+MSRV shortly after. Do not "fix" a version error by bumping to whatever the error message
+names; find the highest constraint across the whole tree and pin that.
+
 Workspace root `Cargo.toml`:
 
 ```toml
 [workspace]
-resolver = "2"
+resolver = "3"
 members = ["contracts/*"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.91.0"
 license = "Apache-2.0"
 repository = "https://github.com/<org>/tallybook-contracts"
 
@@ -173,6 +212,17 @@ debug-assertions = true
 
 `overflow-checks = true` in release is not optional. These contracts handle `i128` money
 amounts; a silent wrap is a loss of funds.
+
+`resolver = "3"` gives MSRV-aware dependency selection: when a transitive dependency
+publishes a version requiring a newer compiler than `rust-version` declares, Cargo picks an
+older compatible release instead of failing the build. If Cargo rejects the value on the
+pinned toolchain, fall back to `resolver = "2"`, note it in the commit message, and carry on
+— this is a convenience, not a correctness requirement.
+
+`rust-version` in `[workspace.package]` stays at `1.91.0` (the MSRV floor) while
+`rust-toolchain.toml` pins `1.98.1` (the build version). Do not raise the floor to match the
+pin. Raise the floor only when a dependency actually forces it, and say which dependency in
+the commit message.
 
 Each contract crate declares:
 
@@ -735,7 +785,10 @@ on. Do not start a later item to "unblock" an earlier one.
 
 **Workspace**
 1. `chore(workspace): initialize cargo workspace and toolchain` — root `Cargo.toml`,
-   `rust-toolchain.toml`, `rustfmt.toml`, `clippy.toml`, `.gitignore`, `LICENSE`.
+   `rust-toolchain.toml`, `rustfmt.toml`, `clippy.toml`, `.gitignore`, `LICENSE`. Before
+   committing, run `rustc --version` and confirm it reports 1.98.1, matching the pinned
+   channel. If a `Cargo.lock` already exists from an earlier attempt on a different
+   toolchain, delete it and let this step regenerate it.
 2. `chore(workspace): add makefile with build test and fmt targets` — `build` must build
    `price-book` before `statement-registry`.
 3. `docs(workspace): add readme skeleton` — one paragraph on what Tallybook is plus a build
@@ -843,6 +896,10 @@ Before you report done, confirm every line:
 - [ ] No token transfers, no balances, no fees, no treasury anywhere.
 - [ ] No metering or per-request state on-chain.
 - [ ] `soroban-sdk` pinned at `=27.0.6`; no prerelease.
+- [ ] `rust-toolchain.toml` pins `channel = "1.98.1"`, not `"stable"`, and lists
+      `wasm32v1-none` under `targets`.
+- [ ] `rust-version` in `[workspace.package]` is `1.91.0` — the MSRV floor, deliberately
+      lower than the pinned channel.
 - [ ] Everything built with `stellar contract build` targeting `wasm32v1-none`; no
       `cargo build` of contracts.
 - [ ] `overflow-checks = true` in the release profile.
