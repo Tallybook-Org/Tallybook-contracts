@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  STELLAR_CLI_VERSION: "28.0.0"
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins the exact channel, components, and
+      # wasm32v1-none target; `rustup show` is enough to make rustup
+      # resolve and install it for this checkout.
+      - name: Install pinned Rust toolchain
+        run: rustup show
+
+      - name: Cache cargo registry and build output
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # No published stellar-cli crate install is fast enough for CI, so
+      # this pulls the prebuilt release binary instead of `cargo install`.
+      - name: Install stellar-cli
+        run: |
+          curl -sL "https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar xz -C /usr/local/bin
+          stellar --version
+
+      - name: cargo fmt --check
+        run: make fmt-check
+
+      - name: cargo clippy
+        run: make clippy
+
+      - name: cargo test
+        run: make test
+
+      # Not `make build`: that target explicitly orders price-book before
+      # statement-registry for contractimport!, but statement-registry
+      # doesn't exist yet (it lands starting build-sequence step 20). Plain
+      # `stellar contract build` builds every cdylib crate currently in the
+      # workspace — today just price-book. Switch this to `make build` once
+      # statement-registry's contractimport! dependency on price-book's
+      # wasm output is real (build-sequence step 29).
+      - name: stellar contract build
+        run: stellar contract build
