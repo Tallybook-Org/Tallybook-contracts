@@ -15,7 +15,7 @@ mod test;
 mod types;
 
 use error::Error;
-use event::{AnchorEvent, DisputeEvent};
+use event::{AnchorEvent, DisputeEvent, ResolveEvent};
 use types::{Dispute, Protocol, Statement, Status};
 
 #[contract]
@@ -245,6 +245,62 @@ impl StatementRegistry {
         storage::extend_instance_ttl(&env);
 
         DisputeEvent { operator, consumer, seq, reason_hash }.publish(&env);
+
+        Ok(())
+    }
+
+    /// Resolves the dispute against (`operator`, `seq`). Requires **both**
+    /// parties' auth — `operator` first, then the statement's `consumer` —
+    /// per the two-signer design: there is deliberately no arbiter, no
+    /// admin override, and no timeout that auto-resolves in the operator's
+    /// favour. If the two sides never agree, the statement stays publicly
+    /// `Disputed` forever, and that public mark is the entire enforcement
+    /// mechanism.
+    ///
+    /// Errors: `NotFound`, `NotDisputed` if the statement is not currently
+    /// `Disputed`, `CreditTooLarge` if `amount_credited` is negative or
+    /// exceeds the statement's `amount_billed`.
+    pub fn resolve_dispute(
+        env: Env,
+        operator: Address,
+        seq: u64,
+        resolution_hash: BytesN<32>,
+        amount_credited: i128,
+    ) -> Result<(), Error> {
+        operator.require_auth();
+
+        let mut statement = storage::get_statement(&env, &operator, seq).ok_or(Error::NotFound)?;
+        statement.consumer.require_auth();
+
+        if statement.status != Status::Disputed {
+            return Err(Error::NotDisputed);
+        }
+        if amount_credited < 0 || amount_credited > statement.amount_billed {
+            return Err(Error::CreditTooLarge);
+        }
+
+        statement.status = Status::Resolved;
+        storage::set_statement(&env, &operator, seq, &statement);
+
+        // A Dispute always exists alongside a Disputed statement —
+        // open_dispute() writes both together and nothing else changes
+        // status to Disputed — but this is a storage read, not a type-level
+        // guarantee, so it stays an error rather than an unwrap.
+        let mut dispute = storage::get_dispute(&env, &operator, seq).ok_or(Error::NotFound)?;
+        dispute.resolution_hash = Some(resolution_hash.clone());
+        dispute.amount_credited = amount_credited;
+        dispute.resolved_ledger = Some(env.ledger().sequence());
+        storage::set_dispute(&env, &operator, seq, &dispute);
+        storage::extend_instance_ttl(&env);
+
+        ResolveEvent {
+            operator,
+            consumer: statement.consumer.clone(),
+            seq,
+            resolution_hash,
+            amount_credited,
+        }
+        .publish(&env);
 
         Ok(())
     }
