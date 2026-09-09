@@ -304,4 +304,31 @@ impl StatementRegistry {
 
         Ok(())
     }
+
+    /// Returns the anchored statement at (`operator`, `seq`). No auth —
+    /// read-only.
+    ///
+    /// Errors: `NotFound` if no such statement exists.
+    pub fn get_statement(env: Env, operator: Address, seq: u64) -> Result<Statement, Error> {
+        storage::get_statement(&env, &operator, seq).ok_or(Error::NotFound)
+    }
+
+    /// Returns the sequence numbers anchored for (`operator`, `consumer`),
+    /// oldest first, newest last. No auth — read-only. An empty result
+    /// means no statements exist for the pair; that is not an error.
+    pub fn list_statements(
+        env: Env,
+        operator: Address,
+        consumer: Address,
+    ) -> Result<Vec<u64>, Error> {
+        Ok(storage::get_consumer_idx(&env, &operator, &consumer))
+    }
+
+    /// Returns the dispute against (`operator`, `seq`). No auth —
+    /// read-only.
+    ///
+    /// Errors: `NotFound` if no dispute has been opened.
+    pub fn get_dispute(env: Env, operator: Address, seq: u64) -> Result<Dispute, Error> {
+        storage::get_dispute(&env, &operator, seq).ok_or(Error::NotFound)
+    }
 }
