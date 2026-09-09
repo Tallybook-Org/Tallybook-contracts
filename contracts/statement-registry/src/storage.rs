@@ -1,8 +1,3 @@
-// Per CLAUDE.md's build sequence, storage helpers land in their own commit
-// before the constructor and the functions that call them exist. Lifted
-// once lib.rs has a caller for every helper below.
-#![allow(dead_code)]
-
 use soroban_sdk::{contracttype, vec, Address, Env, Vec};
 
 use crate::types::{Dispute, Statement};
@@ -127,4 +122,27 @@ pub fn set_dispute(env: &Env, operator: &Address, seq: u64, dispute: &Dispute) {
     let key = DataKey::Dispute(operator.clone(), seq);
     env.storage().persistent().set(&key, dispute);
     env.storage().persistent().extend_ttl(&key, BUMP_THRESHOLD, BUMP_AMOUNT);
+}
+
+/// Extends `Statement(operator, seq)`'s TTL to `ledgers` from now (clamped
+/// to `BUMP_AMOUNT`, the same "sane maximum" every other TTL bump in this
+/// contract uses), unless it is already extended at least that far —
+/// `extend_ttl`'s threshold and target are the same value on purpose, so
+/// this only ever extends, never shortens.
+pub fn extend_statement_ttl_to(env: &Env, operator: &Address, seq: u64, ledgers: u32) {
+    let extend_to = ledgers.min(BUMP_AMOUNT);
+    let key = DataKey::Statement(operator.clone(), seq);
+    env.storage().persistent().extend_ttl(&key, extend_to, extend_to);
+}
+
+/// Extends `Dispute(operator, seq)`'s TTL the same way, only if a dispute
+/// exists — an `Anchored` statement that was never disputed has no
+/// `Dispute` entry, and extending a nonexistent key is not a valid
+/// operation, not a no-op to guard defensively against.
+pub fn extend_dispute_ttl_to(env: &Env, operator: &Address, seq: u64, ledgers: u32) {
+    let key = DataKey::Dispute(operator.clone(), seq);
+    if env.storage().persistent().has(&key) {
+        let extend_to = ledgers.min(BUMP_AMOUNT);
+        env.storage().persistent().extend_ttl(&key, extend_to, extend_to);
+    }
 }

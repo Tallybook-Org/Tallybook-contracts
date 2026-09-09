@@ -331,4 +331,30 @@ impl StatementRegistry {
     pub fn get_dispute(env: Env, operator: Address, seq: u64) -> Result<Dispute, Error> {
         storage::get_dispute(&env, &operator, seq).ok_or(Error::NotFound)
     }
+
+    /// Extends the TTL of the statement at (`operator`, `seq`) — and its
+    /// dispute, if one exists — out to `ledgers` from now, clamped to a
+    /// sane maximum.
+    ///
+    /// No auth, intentionally: anyone may pay rent to keep an audit record
+    /// alive. An auditor checking a three-year-old statement is not a
+    /// party to it and was never going to be able to authenticate as one —
+    /// requiring auth here would just make old records unrecoverable once
+    /// their original parties are unreachable. Do not "fix" this by adding
+    /// auth.
+    ///
+    /// Errors: `NotFound` if no such statement exists.
+    pub fn extend_statement_ttl(
+        env: Env,
+        operator: Address,
+        seq: u64,
+        ledgers: u32,
+    ) -> Result<(), Error> {
+        storage::get_statement(&env, &operator, seq).ok_or(Error::NotFound)?;
+
+        storage::extend_statement_ttl_to(&env, &operator, seq, ledgers);
+        storage::extend_dispute_ttl_to(&env, &operator, seq, ledgers);
+
+        Ok(())
+    }
 }
