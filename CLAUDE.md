@@ -765,6 +765,44 @@ data:   (operator: Address, consumer: Address, seq: u64,
 These three events are the indexer's complete on-chain input. Field order is an interface
 contract — an off-chain consumer reads them positionally. Do not reorder or insert fields.
 
+### Consumer index bucketing (planned)
+
+**Status: planned, not implemented.** The contract surface described above — a single
+`ConsumerIdx(operator, consumer) -> Vec<u64>` key and
+`list_statements(env, operator, consumer) -> Result<Vec<u64>, Error>` — is what is actually
+built and tested in this repo today. The design below is the settled upstream replacement
+for it, tracked as a backlog issue, and is documented here so the change is specified before
+anyone starts on it. Do not implement it against this section alone without checking the
+issue tracker for the current status.
+
+The problem: every `anchor()` call for a given `(operator, consumer)` pair currently reads
+the pair's *entire* history vector, appends one element, and writes it all back — an O(n)
+read-modify-write that grows with the pair's total statement count, and `IndexFull` (once
+`CONSUMER_IDX_CAP = 500` is reached) permanently blocks that pair from ever anchoring again.
+
+The settled replacement:
+
+- Storage key becomes `ConsumerIdx(operator, consumer, bucket)`, where
+  `bucket = period_end / BUCKET_LEDGERS`.
+- `BUCKET_LEDGERS = 518_400` — 30 × `DAY_IN_LEDGERS` (17,280), matching `BUMP_THRESHOLD`.
+  Each bucket spans roughly 30 days' worth of ledgers.
+- `anchor()` computes the bucket for its `period_end` and touches only that one bucket's
+  vector, not the pair's whole history.
+- `list_statements` signature changes to
+  `list_statements(env, operator, consumer, start_bucket: u32, limit: u32) -> Result<Vec<u64>, Error>`,
+  returning ascending sequence numbers starting from `start_bucket` forward, with `limit`
+  clamped to 100.
+- `IndexFull` stays at discriminant 9 but is **redefined**: it now means a single bucket
+  exceeded `BUCKET_CAP = 500`, not that the pair's lifetime history is full. Lifetime
+  capacity per `(operator, consumer)` pair becomes unbounded — a pair simply accumulates
+  more buckets over time instead of hitting a hard ceiling.
+
+This is a real public-API change (the `list_statements` signature) as well as a storage
+layout change, which is why it is called out here rather than left to an issue alone: this
+document is the fixed contract surface, and the surface itself is changing. Once
+implemented, this section should be updated to move the design out of "planned" and into
+§6's normal function/error documentation, and this note removed.
+
 ---
 
 ## 7. Git workflow — non-negotiable
