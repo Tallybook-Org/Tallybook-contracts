@@ -4,7 +4,9 @@
 // for building throwaway data like the leaf array below.
 extern crate std;
 
-use soroban_sdk::{Bytes, BytesN, Env};
+use soroban_sdk::{testutils::Address as _, Address, Bytes, BytesN, Env};
+
+use crate::{Error, StatementRegistry};
 
 /// sha256(min(a, b) || max(a, b)) — a reference implementation independent
 /// of merkle::fold, so tests assert against a computation that doesn't
@@ -14,6 +16,51 @@ fn hash_pair(env: &Env, a: &BytesN<32>, b: &BytesN<32>) -> BytesN<32> {
     let mut concatenated = Bytes::from(lo.clone());
     concatenated.append(&Bytes::from(hi.clone()));
     env.crypto().sha256(&concatenated).to_bytes()
+}
+
+/// Registers a fresh, real price_book contract (never mocked — the whole
+/// point of §6's PriceVersionStale check is to test against real
+/// on-chain price-book behaviour) and a fresh StatementRegistry pointed at
+/// it. Auth is not mocked here; individual tests opt into
+/// `env.mock_all_auths()` or explicit `mock_auths` themselves.
+fn setup() -> (Env, Address, Address, Address) {
+    let env = Env::default();
+    let admin = Address::generate(&env);
+    let price_book_admin = Address::generate(&env);
+    let price_book_id = env.register(crate::price_book::WASM, (price_book_admin,));
+    let contract_id = env.register(StatementRegistry, (admin.clone(), price_book_id.clone()));
+    (env, contract_id, admin, price_book_id)
+}
+
+mod constructor {
+    use super::*;
+
+    #[test]
+    fn happy_path_sets_admin_and_price_book() {
+        // No public getters for Admin or PriceBook by design (admin holds
+        // no power; price_book is only ever read internally by anchor()) —
+        // reach into storage.rs directly (crate-internal) to prove the
+        // writes landed.
+        let (env, contract_id, _admin, price_book_id) = setup();
+        let (admin_is_set, stored_price_book) = env.as_contract(&contract_id, || {
+            (crate::storage::has_admin(&env), crate::storage::get_price_book(&env))
+        });
+        assert!(admin_is_set);
+        assert_eq!(stored_price_book, Some(price_book_id));
+    }
+
+    #[test]
+    fn double_initialization_is_rejected() {
+        let (env, contract_id, admin, price_book_id) = setup();
+        // The host only invokes a constructor once per real deployment;
+        // env.as_contract lets this test call the guarded function again
+        // directly, in the deployed contract's own storage context, to
+        // prove the AlreadyInitialized guard actually fires.
+        let result = env.as_contract(&contract_id, || {
+            StatementRegistry::__constructor(env.clone(), admin.clone(), price_book_id.clone())
+        });
+        assert_eq!(result, Err(Error::AlreadyInitialized));
+    }
 }
 
 mod merkle {
@@ -146,8 +193,7 @@ mod fixtures {
 }
 
 mod price_book_import {
-    use soroban_sdk::testutils::Address as _;
-    use soroban_sdk::{Address, String};
+    use soroban_sdk::String;
 
     use super::*;
 
