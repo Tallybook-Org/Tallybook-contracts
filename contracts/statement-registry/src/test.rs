@@ -177,6 +177,182 @@ mod anchor {
         .to_xdr(&env, &contract_id);
         assert_eq!(env.events().all(), std::vec![expected]);
     }
+
+    // BadPeriod, EmptyStatement, and BadAmounts are all checked before the
+    // price_book cross-contract call, so these tests pass an arbitrary
+    // price_book_version (0) — it's never reached.
+
+    #[test]
+    fn bad_period_start_not_before_end_is_rejected() {
+        let (env, contract_id, _admin, _price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+        let base = env.ledger().sequence();
+
+        let result = client.try_anchor(
+            &operator,
+            &consumer,
+            &base,
+            &base, // period_start == period_end
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &0,
+            &Protocol::X402,
+            &None,
+        );
+        assert_eq!(result, Err(Ok(Error::BadPeriod)));
+    }
+
+    #[test]
+    fn bad_period_end_after_current_ledger_is_rejected() {
+        let (env, contract_id, _admin, _price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+        let base = env.ledger().sequence();
+
+        let result = client.try_anchor(
+            &operator,
+            &consumer,
+            &base,
+            &(base + 1), // period_end is in the future — the period hasn't finished
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &0,
+            &Protocol::X402,
+            &None,
+        );
+        assert_eq!(result, Err(Ok(Error::BadPeriod)));
+    }
+
+    #[test]
+    fn empty_statement_is_rejected() {
+        let (env, contract_id, _admin, _price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+        let base = env.ledger().sequence();
+        env.ledger().set_sequence_number(base + 100);
+
+        let result = client.try_anchor(
+            &operator,
+            &consumer,
+            &base,
+            &(base + 1),
+            &usage_root,
+            &0, // request_count
+            &token,
+            &1000i128,
+            &900i128,
+            &0,
+            &Protocol::X402,
+            &None,
+        );
+        assert_eq!(result, Err(Ok(Error::EmptyStatement)));
+    }
+
+    #[test]
+    fn bad_amounts_negative_billed_is_rejected() {
+        let (env, contract_id, _admin, _price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+        let base = env.ledger().sequence();
+        env.ledger().set_sequence_number(base + 100);
+
+        let result = client.try_anchor(
+            &operator,
+            &consumer,
+            &base,
+            &(base + 1),
+            &usage_root,
+            &10,
+            &token,
+            &(-1i128),
+            &0i128,
+            &0,
+            &Protocol::X402,
+            &None,
+        );
+        assert_eq!(result, Err(Ok(Error::BadAmounts)));
+    }
+
+    #[test]
+    fn bad_amounts_negative_settled_is_rejected() {
+        let (env, contract_id, _admin, _price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+        let base = env.ledger().sequence();
+        env.ledger().set_sequence_number(base + 100);
+
+        let result = client.try_anchor(
+            &operator,
+            &consumer,
+            &base,
+            &(base + 1),
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &(-1i128),
+            &0,
+            &Protocol::X402,
+            &None,
+        );
+        assert_eq!(result, Err(Ok(Error::BadAmounts)));
+    }
+
+    #[test]
+    fn bad_amounts_settled_exceeds_billed_is_rejected() {
+        let (env, contract_id, _admin, _price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+        let base = env.ledger().sequence();
+        env.ledger().set_sequence_number(base + 100);
+
+        let result = client.try_anchor(
+            &operator,
+            &consumer,
+            &base,
+            &(base + 1),
+            &usage_root,
+            &10,
+            &token,
+            &100i128,
+            &101i128, // settled > billed
+            &0,
+            &Protocol::X402,
+            &None,
+        );
+        assert_eq!(result, Err(Ok(Error::BadAmounts)));
+    }
 }
 
 mod merkle {
