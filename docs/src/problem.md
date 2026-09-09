@@ -39,3 +39,9 @@ one job and nothing else.
 This is early tooling for a small market. The population of APIs charging machines per
 request, and the population of agents paying them, are both still small. Nothing here
 assumes that changes on a particular timeline.
+
+Both contracts are live on testnet today: `price_book` at
+[`CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW`](https://stellar.expert/explorer/testnet/contract/CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW)
+and `statement_registry` at
+[`CB75TTWGP3TLKEDGA2WOLEVCNKLUX6X5KS47GMWGBHUAVES7J55LY25M`](https://stellar.expert/explorer/testnet/contract/CB75TTWGP3TLKEDGA2WOLEVCNKLUX6X5KS47GMWGBHUAVES7J55LY25M).
+See [Contracts](contracts/overview.md) for the full interface.
