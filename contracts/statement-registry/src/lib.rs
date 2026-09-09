@@ -15,8 +15,8 @@ mod test;
 mod types;
 
 use error::Error;
-use event::AnchorEvent;
-use types::{Protocol, Statement, Status};
+use event::{AnchorEvent, DisputeEvent};
+use types::{Dispute, Protocol, Statement, Status};
 
 #[contract]
 pub struct StatementRegistry;
@@ -201,5 +201,51 @@ impl StatementRegistry {
         let statement = storage::get_statement(&env, &operator, seq).ok_or(Error::NotFound)?;
         let root = merkle::fold(&env, leaf, &proof);
         Ok(root == statement.usage_root)
+    }
+
+    /// Opens a public dispute against (`operator`, `seq`). Callable only by
+    /// the statement's `consumer`.
+    ///
+    /// `consumer` must match the statement's own `consumer` field — a
+    /// mismatch returns `NotFound`, the same error as a missing statement,
+    /// so a party unrelated to the statement cannot learn whether it
+    /// exists.
+    ///
+    /// Errors: `NotFound`, `NotAnchored` if the statement is not currently
+    /// `Anchored`.
+    pub fn open_dispute(
+        env: Env,
+        operator: Address,
+        seq: u64,
+        consumer: Address,
+        reason_hash: BytesN<32>,
+    ) -> Result<(), Error> {
+        consumer.require_auth();
+
+        let mut statement = storage::get_statement(&env, &operator, seq).ok_or(Error::NotFound)?;
+        if statement.consumer != consumer {
+            return Err(Error::NotFound);
+        }
+        if statement.status != Status::Anchored {
+            return Err(Error::NotAnchored);
+        }
+
+        statement.status = Status::Disputed;
+        storage::set_statement(&env, &operator, seq, &statement);
+
+        let dispute = Dispute {
+            consumer: consumer.clone(),
+            reason_hash: reason_hash.clone(),
+            opened_ledger: env.ledger().sequence(),
+            resolution_hash: None,
+            amount_credited: 0,
+            resolved_ledger: None,
+        };
+        storage::set_dispute(&env, &operator, seq, &dispute);
+        storage::extend_instance_ttl(&env);
+
+        DisputeEvent { operator, consumer, seq, reason_hash }.publish(&env);
+
+        Ok(())
     }
 }
