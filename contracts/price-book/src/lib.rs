@@ -11,6 +11,7 @@ mod test;
 mod types;
 
 use error::Error;
+use event::PublishEvent;
 use types::{PriceBookVersion, TimelineEntry};
 
 #[contract]
@@ -99,7 +100,7 @@ impl PriceBook {
         storage::set_timeline(&env, &operator, &timeline);
         storage::extend_instance_ttl(&env);
 
-        event::publish(&env, operator, version, schedule_hash, effective_ledger);
+        PublishEvent { operator, version, schedule_hash, effective_ledger }.publish(&env);
 
         Ok(version)
     }

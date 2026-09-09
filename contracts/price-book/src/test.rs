@@ -53,9 +53,9 @@ mod constructor {
 }
 
 mod publish {
-    use soroban_sdk::{testutils::Events as _, vec, IntoVal, String, Symbol};
+    use soroban_sdk::{testutils::Events as _, Event as _, IntoVal, String};
 
-    use crate::PriceBookClient;
+    use crate::{event::PublishEvent, PriceBookClient};
 
     use super::*;
 
@@ -87,17 +87,14 @@ mod publish {
 
         let version = client.publish(&operator, &hash, &uri, &current_ledger);
 
-        assert_eq!(
-            env.events().all(),
-            vec![
-                &env,
-                (
-                    contract_id.clone(),
-                    (Symbol::new(&env, "price_book"), Symbol::new(&env, "publish")).into_val(&env),
-                    (operator, version, hash, current_ledger).into_val(&env),
-                ),
-            ]
-        );
+        let expected = PublishEvent {
+            operator,
+            version,
+            schedule_hash: hash,
+            effective_ledger: current_ledger,
+        }
+        .to_xdr(&env, &contract_id);
+        assert_eq!(env.events().all(), std::vec![expected]);
     }
 
     #[test]

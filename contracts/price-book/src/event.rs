@@ -1,28 +1,19 @@
-// soroban-sdk 27.0.6 deprecates Events::publish(topics, data) in favour of
-// the #[contractevent] struct macro. The macro's `data_format = "vec"` mode
-// would reproduce this wire format, but it publishes via a struct-with-
-// fields, not the "function per event" with an explicit topics/data tuple
-// that CLAUDE.md §5/§6 specify, and topic/data shape here is a byte-for-
-// byte interface another repo parses positionally — not something to
-// restructure on a lint's say-so. Keeping the deprecated call, scoped and
-// documented, is the safer choice.
-#![allow(deprecated)]
-
-use soroban_sdk::{Address, BytesN, Env, Symbol};
+use soroban_sdk::{contractevent, Address, BytesN};
 
 /// `topics: ("price_book", "publish")`
-/// `data: (operator, version, schedule_hash, effective_ledger)`
+/// `data: (operator, version, schedule_hash, effective_ledger)`, in field
+/// declaration order (`data_format = "vec"` — a plain positional list, not
+/// the macro's default per-field map).
 ///
-/// Published only after the write it describes has landed. Field order is
-/// part of the public interface — an off-chain indexer reads it
-/// positionally — so it must never be reordered.
-pub fn publish(
-    env: &Env,
-    operator: Address,
-    version: u32,
-    schedule_hash: BytesN<32>,
-    effective_ledger: u32,
-) {
-    let topics = (Symbol::new(env, "price_book"), Symbol::new(env, "publish"));
-    env.events().publish(topics, (operator, version, schedule_hash, effective_ledger));
+/// Publish only after the write it describes has landed, via
+/// `PublishEvent { .. }.publish(&env)`. Field order is part of the public
+/// interface — an off-chain indexer reads it positionally — so it must
+/// never be reordered.
+#[contractevent(topics = ["price_book", "publish"], data_format = "vec")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PublishEvent {
+    pub operator: Address,
+    pub version: u32,
+    pub schedule_hash: BytesN<32>,
+    pub effective_ledger: u32,
 }
