@@ -1183,6 +1183,132 @@ mod resolve_dispute {
     }
 }
 
+mod extend_statement_ttl {
+    use soroban_sdk::testutils::storage::Persistent as _;
+    use soroban_sdk::testutils::Ledger as _;
+
+    use crate::storage::DataKey;
+    use crate::types::Protocol;
+    use crate::StatementRegistryClient;
+
+    use super::*;
+
+    /// Anchors a minimal, otherwise-valid statement and returns
+    /// (Env, contract_id, operator, consumer, seq).
+    fn anchor_statement() -> (Env, Address, Address, Address, u64) {
+        let (env, contract_id, _admin, price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+
+        let base = env.ledger().sequence();
+        let version = publish_schedule(&env, &price_book_id, &operator, base);
+        env.ledger().set_sequence_number(base + 100);
+
+        let seq = client.anchor(
+            &operator,
+            &consumer,
+            &base,
+            &(base + 50),
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &version,
+            &Protocol::X402,
+            &None,
+        );
+        (env, contract_id, operator, consumer, seq)
+    }
+
+    fn statement_ttl(env: &Env, contract_id: &Address, operator: &Address, seq: u64) -> u32 {
+        let key = DataKey::Statement(operator.clone(), seq);
+        env.as_contract(contract_id, || env.storage().persistent().get_ttl(&key))
+    }
+
+    #[test]
+    fn no_auth_required_and_extends_statement_ttl() {
+        let (env, contract_id, operator, _consumer, seq) = anchor_statement();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+
+        // anchor() already extends Statement's TTL out to the fixed
+        // BUMP_AMOUNT ceiling, so extend_statement_ttl() with any smaller
+        // target would be a correct no-op, not a useful test of growth.
+        // Advance the ledger first so the remaining TTL erodes, giving a
+        // real gap for the extension to close.
+        env.ledger().set_sequence_number(env.ledger().sequence() + 1_000);
+        let ttl_before = statement_ttl(&env, &contract_id, &operator, seq);
+
+        // Switch to strict enforcement with zero valid auth entries — the
+        // strongest proof that no auth is required, stronger than simply
+        // never having called mock_all_auths (which anchor_statement()
+        // already used for its own setup and left active).
+        env.mock_auths(&[]);
+        client.extend_statement_ttl(&operator, &seq, &crate::storage::BUMP_AMOUNT);
+
+        let ttl_after = statement_ttl(&env, &contract_id, &operator, seq);
+        assert!(ttl_after > ttl_before);
+    }
+
+    #[test]
+    fn also_extends_dispute_ttl_when_one_exists() {
+        let (env, contract_id, operator, consumer, seq) = anchor_statement();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let reason_hash = BytesN::from_array(&env, &[7u8; 32]);
+        env.mock_all_auths();
+        client.open_dispute(&operator, &seq, &consumer, &reason_hash);
+
+        env.ledger().set_sequence_number(env.ledger().sequence() + 1_000);
+        let dispute_key = DataKey::Dispute(operator.clone(), seq);
+        let ttl_before =
+            env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&dispute_key));
+
+        env.mock_auths(&[]);
+        client.extend_statement_ttl(&operator, &seq, &crate::storage::BUMP_AMOUNT);
+
+        let ttl_after =
+            env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&dispute_key));
+        assert!(ttl_after > ttl_before);
+    }
+
+    #[test]
+    fn does_not_error_when_no_dispute_exists() {
+        // A statement that was never disputed has no Dispute key at all —
+        // extend_dispute_ttl_to() must skip it rather than erroring.
+        let (env, contract_id, operator, _consumer, seq) = anchor_statement();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+
+        env.mock_auths(&[]);
+        client.extend_statement_ttl(&operator, &seq, &1_000_000);
+    }
+
+    #[test]
+    fn clamped_to_a_sane_maximum() {
+        let (env, contract_id, operator, _consumer, seq) = anchor_statement();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+
+        env.mock_auths(&[]);
+        client.extend_statement_ttl(&operator, &seq, &u32::MAX);
+
+        let ttl_after = statement_ttl(&env, &contract_id, &operator, seq);
+        assert!(ttl_after <= crate::storage::BUMP_AMOUNT);
+    }
+
+    #[test]
+    fn not_found_for_missing_statement() {
+        let (env, contract_id, _admin, _price_book_id) = setup();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+
+        let result = client.try_extend_statement_ttl(&operator, &1, &1_000_000);
+        assert_eq!(result, Err(Ok(Error::NotFound)));
+    }
+}
+
 mod merkle {
     use soroban_sdk::vec;
 

@@ -9,7 +9,9 @@ const BUMP_THRESHOLD: u32 = 30 * DAY_IN_LEDGERS;
 /// ...and extend it out to this many ledgers of headroom. A year of
 /// headroom on a one-year bump is deliberate: these are audit records, and
 /// the cost of a rent bump is trivial next to an unreadable statement.
-const BUMP_AMOUNT: u32 = 365 * DAY_IN_LEDGERS;
+// pub: extend_statement_ttl()'s clamp test needs the exact value to assert
+// against, rather than duplicating the literal independently in test.rs.
+pub const BUMP_AMOUNT: u32 = 365 * DAY_IN_LEDGERS;
 
 /// `list_statements()` for one (operator, consumer) pair is a Vec of
 /// sequence numbers, capped rather than left to grow without limit.
