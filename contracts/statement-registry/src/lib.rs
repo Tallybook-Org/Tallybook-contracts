@@ -8,6 +8,7 @@ use soroban_sdk::{contract, contractimpl};
 
 mod error;
 mod event;
+mod merkle;
 mod storage;
 mod types;
 
