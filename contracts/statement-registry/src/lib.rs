@@ -47,18 +47,28 @@ impl StatementRegistry {
     /// (`period_start < period_end <= current ledger`); `request_count` is
     /// non-zero; amounts are non-negative and `amount_settled <=
     /// amount_billed`; `channel` is present iff `protocol == MppSession`;
-    /// and — the single most important check in this contract — that
-    /// `price_book_version` is the version actually in force at
-    /// `period_end`, per a live call to the price_book contract. This last
-    /// check is what stops an operator anchoring against a favourable old
-    /// schedule.
+    /// and — the most important checks in this contract — that the price
+    /// book agrees on one version for the whole period, and that
+    /// `price_book_version` is that version.
+    ///
+    /// The price check is two live calls to the price_book contract, not
+    /// one: `version_at(period_start)` and `version_at(period_end)` must
+    /// agree with each other before either is compared against
+    /// `price_book_version`. If the schedule changed partway through the
+    /// period, the two calls disagree and the period is rejected outright
+    /// — no single version honestly covers a statement whose window
+    /// straddles a price change, no matter what the caller claims. Only
+    /// once the period is confirmed to sit inside one version's window is
+    /// that version compared against `price_book_version`, which is what
+    /// stops an operator anchoring against a favourable old (or claiming a
+    /// not-yet-effective new) schedule.
     ///
     /// Returns the new sequence number for `operator` (the first anchor is
     /// 1).
     ///
     /// Errors: `BadPeriod`, `EmptyStatement`, `BadAmounts`,
-    /// `ChannelMismatch`, `PriceVersionUnknown`, `PriceVersionStale`,
-    /// `IndexFull`.
+    /// `ChannelMismatch`, `PriceVersionUnknown`, `PeriodSpansPriceChange`,
+    /// `PriceVersionStale`, `IndexFull`.
     // Argument count is fixed by the spec this contract is built against;
     // splitting it into a struct would change the public function
     // signature, which this repo has no authority to do.
@@ -102,11 +112,18 @@ impl StatementRegistry {
         // elsewhere, not by the type system.
         let price_book_id = storage::get_price_book(&env).ok_or(Error::PriceVersionUnknown)?;
         let price_book_client = price_book::Client::new(&env, &price_book_id);
-        let live_version = price_book_client
+        let version_at_start = price_book_client
+            .try_version_at(&operator, &period_start)
+            .map_err(|_| Error::PriceVersionUnknown)?
+            .map_err(|_| Error::PriceVersionUnknown)?;
+        let version_at_end = price_book_client
             .try_version_at(&operator, &period_end)
             .map_err(|_| Error::PriceVersionUnknown)?
             .map_err(|_| Error::PriceVersionUnknown)?;
-        if live_version != price_book_version {
+        if version_at_start != version_at_end {
+            return Err(Error::PeriodSpansPriceChange);
+        }
+        if version_at_end != price_book_version {
             return Err(Error::PriceVersionStale);
         }
 

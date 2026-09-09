@@ -407,11 +407,11 @@ mod anchor {
     // price_book (never mocked — see setup()'s own doc comment), because
     // this is the check the whole contract exists for. PriceVersionUnknown
     // isn't named in its own build-sequence step, so it's covered here
-    // alongside PriceVersionStale as the other half of the same
-    // cross-contract validation block.
+    // alongside PriceVersionStale and PeriodSpansPriceChange as the other
+    // halves of the same cross-contract validation block.
 
     #[test]
-    fn price_version_stale_is_rejected() {
+    fn period_straddling_price_change_is_rejected() {
         let (env, contract_id, _admin, price_book_id) = setup();
         env.mock_all_auths();
         let client = StatementRegistryClient::new(&env, &contract_id);
@@ -428,11 +428,10 @@ mod anchor {
         assert_eq!(v2, v1 + 1);
         env.ledger().set_sequence_number(base + 200);
 
-        // period_end (base + 100) is after v2's effective_ledger
-        // (base + 20), so version_at() returns v2 here — but the anchor
-        // call claims v1, the price that was in force before the raise.
-        // This is exactly the "anchor against a favourable old schedule"
-        // attempt the check exists to stop.
+        // period_start (base) is under v1; period_end (base + 100) is
+        // after v2's effective_ledger (base + 20), so it's under v2. No
+        // single price_book_version honestly covers this period —
+        // rejected regardless of which version is claimed.
         let result = client.try_anchor(
             &operator,
             &consumer,
@@ -447,7 +446,115 @@ mod anchor {
             &Protocol::X402,
             &None,
         );
+        assert_eq!(result, Err(Ok(Error::PeriodSpansPriceChange)));
+    }
+
+    #[test]
+    fn price_version_stale_is_rejected() {
+        let (env, contract_id, _admin, price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+
+        let base = env.ledger().sequence();
+        let v1 = publish_schedule(&env, &price_book_id, &operator, base);
+        let v2 = publish_schedule(&env, &price_book_id, &operator, base + 20);
+        env.ledger().set_sequence_number(base + 200);
+
+        // Both period_start and period_end (base + 50, base + 100) are
+        // after v2's effective_ledger, so the period sits entirely inside
+        // v2's window — no spanning. The claim of v1 is simply wrong.
+        let result = client.try_anchor(
+            &operator,
+            &consumer,
+            &(base + 50),
+            &(base + 100),
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &v1,
+            &Protocol::X402,
+            &None,
+        );
         assert_eq!(result, Err(Ok(Error::PriceVersionStale)));
+        // Sanity: v2 is what version_at would actually return here.
+        assert_eq!(v2, v1 + 1);
+    }
+
+    #[test]
+    fn claimed_version_newer_than_in_force_is_rejected() {
+        // Inverse of price_version_stale_is_rejected: only one version
+        // exists, the period sits entirely inside its window (no
+        // spanning), but the claim names a version that hasn't been
+        // published — newer than what's actually in force, not older.
+        let (env, contract_id, _admin, price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+
+        let base = env.ledger().sequence();
+        let v1 = publish_schedule(&env, &price_book_id, &operator, base);
+        env.ledger().set_sequence_number(base + 200);
+
+        let result = client.try_anchor(
+            &operator,
+            &consumer,
+            &base,
+            &(base + 100),
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &(v1 + 1), // claims a version that was never published
+            &Protocol::X402,
+            &None,
+        );
+        assert_eq!(result, Err(Ok(Error::PriceVersionStale)));
+    }
+
+    #[test]
+    fn honest_period_fully_inside_one_version_window_succeeds() {
+        // Multiple versions exist over the contract's lifetime, but the
+        // chosen period sits entirely before the second one takes effect —
+        // the mere existence of a later version elsewhere in time must not
+        // false-positive as PeriodSpansPriceChange.
+        let (env, contract_id, _admin, price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+
+        let base = env.ledger().sequence();
+        let v1 = publish_schedule(&env, &price_book_id, &operator, base);
+        publish_schedule(&env, &price_book_id, &operator, base + 50);
+        env.ledger().set_sequence_number(base + 200);
+
+        let seq = client.anchor(
+            &operator,
+            &consumer,
+            &(base + 10),
+            &(base + 40), // fully before v2's effective_ledger (base + 50)
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &v1,
+            &Protocol::X402,
+            &None,
+        );
+        assert_eq!(seq, 1);
     }
 
     #[test]

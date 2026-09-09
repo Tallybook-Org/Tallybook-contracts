@@ -586,8 +586,15 @@ pub enum Error {
     NotDisputed         = 11,  // resolve called on a statement that is not Disputed
     CreditTooLarge      = 12,  // amount_credited > amount_billed
     ProofTooLong        = 13,  // proof length > MAX_PROOF_NODES
+    PeriodSpansPriceChange = 14, // version_at(period_start) != version_at(period_end)
 }
 ```
+
+`PeriodSpansPriceChange` is distinct from `PriceVersionStale`: the latter is about the claimed
+`price_book_version` not matching what was in force; the former is about the period itself
+straddling a price change, independent of what was claimed — no single version honestly
+covers a statement whose window spans one, so it is rejected before `price_book_version` is
+even compared. See `anchor()` below.
 
 ### Merkle verification (`merkle.rs`)
 
@@ -659,11 +666,15 @@ In this order:
    `BadAmounts`.
 5. Protocol/channel pairing: `MppSession` requires `channel.is_some()`; the other two
    require `channel.is_none()`. Otherwise → `ChannelMismatch`.
-6. Cross-contract call `price_book.version_at(operator, period_end)`. If it errors →
-   `PriceVersionUnknown`. If the returned version `!= price_book_version` →
-   `PriceVersionStale`. **This is the check that stops an operator anchoring against a
-   favourable old schedule.** It is the single most important line in this contract; give it
-   its own test module.
+6. Cross-contract calls `price_book.version_at(operator, period_start)` and
+   `price_book.version_at(operator, period_end)`. If either errors → `PriceVersionUnknown`.
+   If the two returned versions disagree with each other → `PeriodSpansPriceChange`: the
+   schedule changed partway through the period, so no single `price_book_version` honestly
+   covers the whole statement, regardless of which version was claimed. Only once both calls
+   agree on one version is that version compared against `price_book_version` — a mismatch
+   here is `PriceVersionStale`. **This is the check that stops an operator anchoring against
+   a favourable old schedule.** It is the single most important line in this contract; give
+   it its own test module.
 7. `ConsumerIdx` length at `CONSUMER_IDX_CAP` → `IndexFull`.
 8. `seq = Seq(operator).unwrap_or(0) + 1`. Write the `Statement` with `anchored_ledger =
    env.ledger().sequence()` and `status = Status::Anchored`. Write `Seq`. Append `seq` to

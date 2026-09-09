@@ -35,4 +35,11 @@ pub enum Error {
     CreditTooLarge = 12,
     /// A merkle proof longer than `MAX_PROOF_NODES`.
     ProofTooLong = 13,
+    /// `version_at(period_start) != version_at(period_end)`: the schedule
+    /// changed partway through the period, so no single
+    /// `price_book_version` honestly covers the whole thing. Distinct from
+    /// `PriceVersionStale`, which is about the claimed version not
+    /// matching what was in force — this is about the period itself
+    /// straddling a change, independent of what was claimed.
+    PeriodSpansPriceChange = 14,
 }
