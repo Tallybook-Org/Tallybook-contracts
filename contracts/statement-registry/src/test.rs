@@ -1470,3 +1470,127 @@ mod price_book_import {
         assert_eq!(price_book_client.version_at(&operator, &effective_ledger), version);
     }
 }
+
+/// End-to-end walk through the full user journey, both contracts, one Env:
+/// publish a schedule, anchor a statement against it, verify a leaf,
+/// dispute, resolve. Uses only the public client API (no reaching into
+/// storage.rs) since this is meant to read as what a real integrator does.
+mod integration {
+    use soroban_sdk::testutils::{Events as _, Ledger as _};
+    use soroban_sdk::{vec, Event as _, String};
+
+    use crate::event::{AnchorEvent, DisputeEvent, ResolveEvent};
+    use crate::types::{Protocol, Status};
+    use crate::StatementRegistryClient;
+
+    use super::*;
+
+    #[test]
+    fn publish_anchor_verify_dispute_resolve() {
+        let (env, contract_id, _admin, price_book_id) = setup();
+        env.mock_all_auths();
+        let statement_registry = StatementRegistryClient::new(&env, &contract_id);
+        let price_book = crate::price_book::Client::new(&env, &price_book_id);
+
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+
+        // 1. Publish a schedule.
+        let schedule_hash = BytesN::from_array(&env, &[3u8; 32]);
+        let uri = String::from_str(&env, "https://example.com/schedule.json");
+        let base = env.ledger().sequence();
+        let version = price_book.publish(&operator, &schedule_hash, &uri, &base);
+        assert_eq!(version, 1);
+        env.ledger().set_sequence_number(base + 100);
+
+        // 2. Build a real two-leaf merkle tree for the usage root — not a
+        // placeholder value, so the verify step below actually exercises
+        // merkle::fold against a genuine root.
+        let leaf0 = BytesN::from_array(&env, &[10u8; 32]);
+        let leaf1 = BytesN::from_array(&env, &[20u8; 32]);
+        let usage_root = hash_pair(&env, &leaf0, &leaf1);
+
+        // 3. Anchor a statement against the published schedule.
+        let period_start = base;
+        let period_end = base + 50;
+        let seq = statement_registry.anchor(
+            &operator,
+            &consumer,
+            &period_start,
+            &period_end,
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &version,
+            &Protocol::X402,
+            &None,
+        );
+        assert_eq!(seq, 1);
+        let anchor_event = AnchorEvent {
+            operator: operator.clone(),
+            consumer: consumer.clone(),
+            seq,
+            usage_root: usage_root.clone(),
+            amount_billed: 1000,
+            amount_settled: 900,
+            protocol: Protocol::X402,
+        }
+        .to_xdr(&env, &contract_id);
+        assert_eq!(env.events().all(), std::vec![anchor_event]);
+
+        let statement = statement_registry.get_statement(&operator, &seq);
+        assert_eq!(statement.status, Status::Anchored);
+        assert_eq!(statement.usage_root, usage_root);
+        assert_eq!(statement_registry.list_statements(&operator, &consumer), vec![&env, seq]);
+
+        // 4. A buyer verifies one charge against the anchored root.
+        let verified =
+            statement_registry.verify_usage(&operator, &seq, &leaf0, &vec![&env, leaf1.clone()]);
+        assert!(verified);
+        // A leaf that was never in the tree does not verify.
+        let not_in_tree = BytesN::from_array(&env, &[99u8; 32]);
+        assert!(!statement_registry.verify_usage(
+            &operator,
+            &seq,
+            &not_in_tree,
+            &vec![&env, leaf1]
+        ));
+
+        // 5. The buyer disputes the statement.
+        let reason_hash = BytesN::from_array(&env, &[7u8; 32]);
+        statement_registry.open_dispute(&operator, &seq, &consumer, &reason_hash);
+        let dispute_event = DisputeEvent {
+            operator: operator.clone(),
+            consumer: consumer.clone(),
+            seq,
+            reason_hash,
+        }
+        .to_xdr(&env, &contract_id);
+        assert_eq!(env.events().all(), std::vec![dispute_event]);
+        assert_eq!(statement_registry.get_statement(&operator, &seq).status, Status::Disputed);
+
+        // 6. Both parties resolve the dispute.
+        let resolution_hash = BytesN::from_array(&env, &[8u8; 32]);
+        statement_registry.resolve_dispute(&operator, &seq, &resolution_hash, &400i128);
+        let resolve_event = ResolveEvent {
+            operator: operator.clone(),
+            consumer: consumer.clone(),
+            seq,
+            resolution_hash: resolution_hash.clone(),
+            amount_credited: 400,
+        }
+        .to_xdr(&env, &contract_id);
+        assert_eq!(env.events().all(), std::vec![resolve_event]);
+
+        let final_statement = statement_registry.get_statement(&operator, &seq);
+        assert_eq!(final_statement.status, Status::Resolved);
+
+        let dispute = statement_registry.get_dispute(&operator, &seq);
+        assert_eq!(dispute.resolution_hash, Some(resolution_hash));
+        assert_eq!(dispute.amount_credited, 400);
+        assert!(dispute.resolved_ledger.is_some());
+    }
+}
