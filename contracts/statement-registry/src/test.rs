@@ -66,3 +66,81 @@ mod merkle {
         assert_eq!(root, expected_root);
     }
 }
+
+mod fixtures {
+    use serde_json::Value;
+    use soroban_sdk::vec;
+
+    use crate::merkle::fold;
+
+    use super::*;
+
+    /// Parses a 64-hex-character digest into a BytesN<32>. Panics on
+    /// malformed input — test-only, and a fixture that doesn't parse is a
+    /// fixture bug worth failing loudly on.
+    fn hex_to_bytesn(env: &Env, hex: &str) -> BytesN<32> {
+        let mut bytes = [0u8; 32];
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap();
+        }
+        BytesN::from_array(env, &bytes)
+    }
+
+    /// Asserts every (leaf, proof) pair in the fixture folds to its root.
+    fn assert_fixture_folds_to_root(json: &str) {
+        let env = Env::default();
+        let parsed: Value = serde_json::from_str(json).unwrap();
+        let root = hex_to_bytesn(&env, parsed["root"].as_str().unwrap());
+
+        for entry in parsed["proofs"].as_array().unwrap() {
+            let leaf = hex_to_bytesn(&env, entry["leaf"].as_str().unwrap());
+            let mut proof = vec![&env];
+            for node in entry["proof"].as_array().unwrap() {
+                proof.push_back(hex_to_bytesn(&env, node.as_str().unwrap()));
+            }
+            assert_eq!(fold(&env, leaf, &proof), root);
+        }
+    }
+
+    #[test]
+    fn single_leaf_fixture_folds_to_its_root() {
+        assert_fixture_folds_to_root(include_str!("../../../fixtures/merkle/single-leaf.json"));
+    }
+
+    #[test]
+    fn four_leaves_fixture_folds_to_its_root() {
+        assert_fixture_folds_to_root(include_str!("../../../fixtures/merkle/four-leaves.json"));
+    }
+
+    #[test]
+    fn seven_leaves_fixture_folds_to_its_root() {
+        // The unbalanced tree: leaf index 6 is the odd one out at the first
+        // level and gets a shorter proof than the rest — exactly the case
+        // sorted-pair implementations tend to diverge on.
+        assert_fixture_folds_to_root(include_str!("../../../fixtures/merkle/seven-leaves.json"));
+    }
+
+    #[test]
+    fn corrupted_proof_node_does_not_reach_the_root() {
+        let env = Env::default();
+        let parsed: Value =
+            serde_json::from_str(include_str!("../../../fixtures/merkle/four-leaves.json"))
+                .unwrap();
+        let root = hex_to_bytesn(&env, parsed["root"].as_str().unwrap());
+        let entry = &parsed["proofs"][0];
+        let leaf = hex_to_bytesn(&env, entry["leaf"].as_str().unwrap());
+
+        let mut proof = vec![&env];
+        for (i, node) in entry["proof"].as_array().unwrap().iter().enumerate() {
+            let mut node_bytes = hex_to_bytesn(&env, node.as_str().unwrap()).to_array();
+            if i == 0 {
+                // Flip a bit in the first proof node — same shape as a
+                // valid proof, wrong content.
+                node_bytes[0] ^= 0xff;
+            }
+            proof.push_back(BytesN::from_array(&env, &node_bytes));
+        }
+
+        assert_ne!(fold(&env, leaf, &proof), root);
+    }
+}
