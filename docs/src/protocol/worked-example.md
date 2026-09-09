@@ -143,34 +143,47 @@ hash to something else, the root wouldn't match, and `verify_usage` would return
 ## The cost of anchoring
 
 None of the calls in this walkthrough were run against a live network — the numbers
-above are illustrative. One number here isn't: `price_book`'s real `publish()` call on
-the live testnet deployment, made to set up that contract for use, is a real
-transaction with a measured fee.
+above are illustrative. Two numbers here aren't: real `publish()` and `anchor()`
+calls against the live testnet deployment, each a real transaction with a measured
+fee.
 
 ```
-tx hash:     be5cc70b41bc89b139011c0b69945596856709ca35ca6074191126ca70024021
-ledger:      4,587,953 (testnet)
-fee_charged: 1,963,213 stroops = 0.1963213 XLM
-source:      https://horizon-testnet.stellar.org/transactions/be5cc70b41bc89b139011c0b69945596856709ca35ca6074191126ca70024021
+publish():
+  tx hash:     be5cc70b41bc89b139011c0b69945596856709ca35ca6074191126ca70024021
+  ledger:      4,587,953 (testnet)
+  fee_charged: 1,963,213 stroops = 0.1963213 XLM
+  source:      https://horizon-testnet.stellar.org/transactions/be5cc70b41bc89b139011c0b69945596856709ca35ca6074191126ca70024021
+
+anchor():
+  tx hash:     54da8ffd78e0061c7f1d2ace7139ca7628ec3e7f70807b8493ec87b57be72d48
+  ledger:      4,592,019 (testnet)
+  fee_charged: 2,726,864 stroops = 0.2726864 XLM
+  source:      https://horizon-testnet.stellar.org/transactions/54da8ffd78e0061c7f1d2ace7139ca7628ec3e7f70807b8493ec87b57be72d48
 ```
+
+(That `anchor()` call is the one walked through end to end in
+[Verifying a charge](../guides/verifying-a-charge.md) — a much smaller statement
+than this page's, five requests rather than 100,000, since it exists to demonstrate
+the interface rather than to bill anyone. Its fee is real regardless of how small the
+statement behind it is; a persistent write costs what it costs independent of the
+number this particular call happened to be anchoring.)
 
 At the XLM/USD spot price quoted by CoinGecko's public API at the time of writing
-(`$0.184197`), that fee is:
+(`$0.184197`), those fees are:
 
 ```
-0.1963213 XLM × $0.184197/XLM ≈ $0.0362
+publish(): 0.1963213 XLM × $0.184197/XLM ≈ $0.0362
+anchor():  0.2726864 XLM × $0.184197/XLM ≈ $0.0502
 ```
 
-$0.0362 against the $1,000.00 this operator billed for the month is about **0.0036%
-of revenue — one part in roughly 27,700**. `anchor()` has not itself been invoked and
-measured on testnet — its fee is a separate, unmeasured number, and this page doesn't
-claim it equals `publish()`'s. What the two calls have in common is the part that
-matters for this comparison: each is a single Soroban invocation writing a handful of
-persistent entries, paid for once, regardless of how much history that one call
-represents. `anchor()` here represents 100,000 requests; a fee of this rough order,
-paid once for the whole period, is why one `anchor()` call is viable where a
-per-request on-chain write is not — at this same per-invocation cost, writing once per
-request instead of once per period would run **100,000 × $0.0362 ≈ $3,616**, more than
-three and a half times the entire month's billed revenue, before either contract does
-anything with the money. [Invoking the contracts](../developers/invoking.md) runs
-`anchor()` for real and reports its own measured fee once it has.
+`anchor()` costs more than `publish()` — unsurprising, since a `Statement` is a
+larger record than a `PriceBookVersion` and `anchor()` writes to one more index
+(`ConsumerIdx`) than `publish()` does. Using the real, larger `anchor()` figure:
+$0.0502 against the $1,000.00 this operator billed for the month is about **0.005%
+of revenue — one part in roughly 19,900**. That's for one `anchor()` call covering
+the whole period, however many requests it represents. `anchor()` here represents
+100,000 requests; at this same per-invocation cost, writing once per request instead
+of once per period would run **100,000 × $0.0502 ≈ $5,020** — more than five times
+the entire month's billed revenue, before either contract does anything with the
+money. That comparison, not the exact cent figure, is why one `anchor()` call per
+period is viable where a per-request on-chain write is not.
