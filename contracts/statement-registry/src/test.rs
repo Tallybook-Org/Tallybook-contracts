@@ -64,19 +64,6 @@ mod constructor {
         assert!(admin_is_set);
         assert_eq!(stored_price_book, Some(price_book_id));
     }
-
-    #[test]
-    fn double_initialization_is_rejected() {
-        let (env, contract_id, admin, price_book_id) = setup();
-        // The host only invokes a constructor once per real deployment;
-        // env.as_contract lets this test call the guarded function again
-        // directly, in the deployed contract's own storage context, to
-        // prove the AlreadyInitialized guard actually fires.
-        let result = env.as_contract(&contract_id, || {
-            StatementRegistry::__constructor(env.clone(), admin.clone(), price_book_id.clone())
-        });
-        assert_eq!(result, Err(Error::AlreadyInitialized));
-    }
 }
 
 mod anchor {

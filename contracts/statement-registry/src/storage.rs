@@ -51,8 +51,11 @@ pub fn extend_instance_ttl(env: &Env) {
     env.storage().instance().extend_ttl(BUMP_THRESHOLD, BUMP_AMOUNT);
 }
 
-/// Whether `Admin` has been set, i.e. the contract has already been
-/// constructed.
+/// Whether `Admin` has been set. Test-only: production code has no reason
+/// to check this — per CAP-0058 the constructor runs exactly once and is
+/// never callable again — but the constructor test still wants a way to
+/// prove the write landed without a public getter for Admin.
+#[cfg(test)]
 pub fn has_admin(env: &Env) -> bool {
     env.storage().instance().has(&DataKey::Admin)
 }

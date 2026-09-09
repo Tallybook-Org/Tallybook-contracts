@@ -6,7 +6,12 @@ use soroban_sdk::contracterror;
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Error {
-    AlreadyInitialized = 1,
+    // 1 is deliberately unused. It was AlreadyInitialized, guarding
+    // __constructor against a second call — but per CAP-0058, a contract's
+    // constructor is only ever invoked once at creation and is never
+    // callable again, so that error was unreachable on-chain. Removed
+    // rather than renumbered, per the no-renumbering rule above. Same
+    // reasoning and same fix as price_book's own Error enum.
     NotFound = 2,
     /// `period_start >= period_end`, or `period_end > current ledger`.
     BadPeriod = 3,

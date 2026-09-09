@@ -32,15 +32,13 @@ impl StatementRegistry {
     /// and invalidate every historical statement; if the price book must
     /// change, a new `statement_registry` is deployed.
     ///
-    /// Errors: `AlreadyInitialized` if called a second time.
-    pub fn __constructor(env: Env, admin: Address, price_book: Address) -> Result<(), Error> {
-        if storage::has_admin(&env) {
-            return Err(Error::AlreadyInitialized);
-        }
+    /// Per CAP-0058, the host invokes a contract's constructor exactly
+    /// once, at creation, and it is never callable again — so there is no
+    /// double-initialization case to guard against here.
+    pub fn __constructor(env: Env, admin: Address, price_book: Address) {
         storage::set_admin(&env, &admin);
         storage::set_price_book(&env, &price_book);
         storage::extend_instance_ttl(&env);
-        Ok(())
     }
 
     /// Anchors a billing period's statement. Callable only by `operator`.

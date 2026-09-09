@@ -569,7 +569,11 @@ pub const MAX_PROOF_NODES: u32 = 32;
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Error {
-    AlreadyInitialized  = 1,
+    // 1 is deliberately unused. It was AlreadyInitialized, guarding the
+    // constructor against a second call — but per CAP-0058, a contract's
+    // constructor is only ever invoked once at creation and is never
+    // callable again, so that error was unreachable on-chain. Removed
+    // rather than renumbered.
     NotFound            = 2,
     BadPeriod           = 3,   // period_start >= period_end, or period_end > current ledger
     BadAmounts          = 4,   // negative amount, or amount_settled > amount_billed
