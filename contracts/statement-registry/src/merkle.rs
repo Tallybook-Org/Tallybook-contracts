@@ -1,6 +1,3 @@
-// Unused until verify_usage() (build sequence step 38) calls it.
-#![allow(dead_code)]
-
 use soroban_sdk::{Bytes, BytesN, Env, Vec};
 
 /// Folds `leaf` up through `proof` using sorted-pair hashing: at each step,

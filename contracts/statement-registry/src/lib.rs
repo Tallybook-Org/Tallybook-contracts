@@ -4,7 +4,7 @@
 //! for the full interface.
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Vec};
 
 mod error;
 mod event;
@@ -172,5 +172,34 @@ impl StatementRegistry {
         .publish(&env);
 
         Ok(seq)
+    }
+
+    /// Verifies that `leaf` was part of the merkle tree anchored as
+    /// `usage_root` for (`operator`, `seq`), given `proof`. No auth —
+    /// anyone can verify a charge against a statement, and that is the
+    /// whole point.
+    ///
+    /// The leaf format is fixed by the off-chain collector and is not
+    /// computed here; this only folds whatever leaf it is given.
+    ///
+    /// Returns `Ok(false)` — not an error — for a valid-shaped proof that
+    /// does not reach `usage_root`. Errors are reserved for malformed
+    /// input.
+    ///
+    /// Errors: `ProofTooLong` if `proof` has more than `MAX_PROOF_NODES`
+    /// entries. `NotFound` if no such statement exists.
+    pub fn verify_usage(
+        env: Env,
+        operator: Address,
+        seq: u64,
+        leaf: BytesN<32>,
+        proof: Vec<BytesN<32>>,
+    ) -> Result<bool, Error> {
+        if proof.len() > storage::MAX_PROOF_NODES {
+            return Err(Error::ProofTooLong);
+        }
+        let statement = storage::get_statement(&env, &operator, seq).ok_or(Error::NotFound)?;
+        let root = merkle::fold(&env, leaf, &proof);
+        Ok(root == statement.usage_root)
     }
 }
