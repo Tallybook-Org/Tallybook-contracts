@@ -197,3 +197,75 @@ mod publish {
         assert!(result.is_err());
     }
 }
+
+mod get_version {
+    use soroban_sdk::String;
+
+    use crate::PriceBookClient;
+
+    use super::*;
+
+    #[test]
+    fn happy_path_returns_the_published_version() {
+        let (env, contract_id, _admin) = setup();
+        env.mock_all_auths();
+        let client = PriceBookClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let hash = schedule_hash(&env, 1);
+        let uri = String::from_str(&env, "https://example.com/schedule.json");
+        let current_ledger = env.ledger().sequence();
+
+        let version = client.publish(&operator, &hash, &uri, &current_ledger);
+        let published = client.get_version(&operator, &version);
+
+        assert_eq!(published.operator, operator);
+        assert_eq!(published.version, version);
+        assert_eq!(published.schedule_hash, hash);
+        assert_eq!(published.uri, uri);
+        assert_eq!(published.effective_ledger, current_ledger);
+        assert_eq!(published.published_ledger, current_ledger);
+    }
+
+    #[test]
+    fn not_found_for_unpublished_version() {
+        let (env, contract_id, _admin) = setup();
+        let client = PriceBookClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+
+        let result = client.try_get_version(&operator, &1);
+        assert_eq!(result, Err(Ok(Error::NotFound)));
+    }
+}
+
+mod latest {
+    use soroban_sdk::String;
+
+    use crate::PriceBookClient;
+
+    use super::*;
+
+    #[test]
+    fn happy_path_returns_the_highest_published_version() {
+        let (env, contract_id, _admin) = setup();
+        env.mock_all_auths();
+        let client = PriceBookClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let uri = String::from_str(&env, "https://example.com/schedule.json");
+        let current_ledger = env.ledger().sequence();
+
+        client.publish(&operator, &schedule_hash(&env, 1), &uri, &current_ledger);
+        client.publish(&operator, &schedule_hash(&env, 2), &uri, &(current_ledger + 1));
+
+        assert_eq!(client.latest(&operator), 2);
+    }
+
+    #[test]
+    fn not_found_for_an_operator_that_never_published() {
+        let (env, contract_id, _admin) = setup();
+        let client = PriceBookClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+
+        let result = client.try_latest(&operator);
+        assert_eq!(result, Err(Ok(Error::NotFound)));
+    }
+}
