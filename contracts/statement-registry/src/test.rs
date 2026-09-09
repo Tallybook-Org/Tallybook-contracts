@@ -844,6 +844,152 @@ mod verify_usage {
     }
 }
 
+mod open_dispute {
+    use soroban_sdk::testutils::{Events as _, Ledger as _};
+    use soroban_sdk::Event as _;
+
+    use crate::event::DisputeEvent;
+    use crate::types::{Protocol, Status};
+    use crate::StatementRegistryClient;
+
+    use super::*;
+
+    /// Anchors a minimal, otherwise-valid statement and returns
+    /// (Env, contract_id, operator, consumer, seq).
+    fn anchor_statement() -> (Env, Address, Address, Address, u64) {
+        let (env, contract_id, _admin, price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let token = Address::generate(&env);
+        let usage_root = BytesN::from_array(&env, &[42u8; 32]);
+
+        let base = env.ledger().sequence();
+        let version = publish_schedule(&env, &price_book_id, &operator, base);
+        env.ledger().set_sequence_number(base + 100);
+
+        let seq = client.anchor(
+            &operator,
+            &consumer,
+            &base,
+            &(base + 50),
+            &usage_root,
+            &10,
+            &token,
+            &1000i128,
+            &900i128,
+            &version,
+            &Protocol::X402,
+            &None,
+        );
+        (env, contract_id, operator, consumer, seq)
+    }
+
+    #[test]
+    fn happy_path_sets_status_disputed_and_writes_dispute() {
+        let (env, contract_id, operator, consumer, seq) = anchor_statement();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let reason_hash = BytesN::from_array(&env, &[7u8; 32]);
+
+        client.open_dispute(&operator, &seq, &consumer, &reason_hash);
+
+        // No public getters yet (they land in a later commit) — reach into
+        // storage.rs directly to confirm the transition.
+        let (status, dispute) = env.as_contract(&contract_id, || {
+            (
+                crate::storage::get_statement(&env, &operator, seq).unwrap().status,
+                crate::storage::get_dispute(&env, &operator, seq).unwrap(),
+            )
+        });
+        assert_eq!(status, Status::Disputed);
+        assert_eq!(dispute.consumer, consumer);
+        assert_eq!(dispute.reason_hash, reason_hash);
+        assert_eq!(dispute.amount_credited, 0);
+        assert_eq!(dispute.resolution_hash, None);
+        assert_eq!(dispute.resolved_ledger, None);
+    }
+
+    #[test]
+    fn happy_path_emits_dispute_event() {
+        let (env, contract_id, operator, consumer, seq) = anchor_statement();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let reason_hash = BytesN::from_array(&env, &[7u8; 32]);
+
+        client.open_dispute(&operator, &seq, &consumer, &reason_hash);
+
+        let expected =
+            DisputeEvent { operator, consumer, seq, reason_hash }.to_xdr(&env, &contract_id);
+        assert_eq!(env.events().all(), std::vec![expected]);
+    }
+
+    #[test]
+    fn not_found_for_missing_statement() {
+        let (env, contract_id, _admin, _price_book_id) = setup();
+        env.mock_all_auths();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let operator = Address::generate(&env);
+        let consumer = Address::generate(&env);
+        let reason_hash = BytesN::from_array(&env, &[7u8; 32]);
+
+        let result = client.try_open_dispute(&operator, &1, &consumer, &reason_hash);
+        assert_eq!(result, Err(Ok(Error::NotFound)));
+    }
+
+    #[test]
+    fn not_found_for_wrong_consumer_does_not_leak_existence() {
+        let (env, contract_id, operator, _real_consumer, seq) = anchor_statement();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let impostor = Address::generate(&env);
+        let reason_hash = BytesN::from_array(&env, &[7u8; 32]);
+
+        // A statement genuinely exists at (operator, seq), but not for
+        // this consumer — must come back identical to a missing statement.
+        let result = client.try_open_dispute(&operator, &seq, &impostor, &reason_hash);
+        assert_eq!(result, Err(Ok(Error::NotFound)));
+    }
+
+    #[test]
+    fn not_anchored_when_already_disputed() {
+        let (env, contract_id, operator, consumer, seq) = anchor_statement();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let reason_hash = BytesN::from_array(&env, &[7u8; 32]);
+
+        client.open_dispute(&operator, &seq, &consumer, &reason_hash);
+
+        let result = client.try_open_dispute(&operator, &seq, &consumer, &reason_hash);
+        assert_eq!(result, Err(Ok(Error::NotAnchored)));
+    }
+
+    #[test]
+    fn unauthorized_caller_is_rejected() {
+        use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+        use soroban_sdk::IntoVal;
+
+        let (env, contract_id, operator, consumer, seq) = anchor_statement();
+        let client = StatementRegistryClient::new(&env, &contract_id);
+        let attacker = Address::generate(&env);
+        let reason_hash = BytesN::from_array(&env, &[7u8; 32]);
+
+        // Authorize attacker, not consumer — open_dispute() requires
+        // consumer.require_auth(). Confirmed separately that mock_auths
+        // here correctly switches auth enforcement back to strict, even
+        // though anchor_statement() used mock_all_auths for the setup call.
+        env.mock_auths(&[MockAuth {
+            address: &attacker,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "open_dispute",
+                args: (operator.clone(), seq, consumer.clone(), reason_hash.clone()).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+
+        let result = client.try_open_dispute(&operator, &seq, &consumer, &reason_hash);
+        assert!(result.is_err());
+    }
+}
+
 mod merkle {
     use soroban_sdk::vec;
 
