@@ -10,6 +10,7 @@ mod error;
 mod event;
 mod merkle;
 mod storage;
+mod test;
 mod types;
 
 #[contract]
