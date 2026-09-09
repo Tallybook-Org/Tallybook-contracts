@@ -6,6 +6,8 @@
 
 use soroban_sdk::{contract, contractimpl};
 
+mod types;
+
 #[contract]
 pub struct StatementRegistry;
 
