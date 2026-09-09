@@ -103,4 +103,24 @@ impl PriceBook {
 
         Ok(version)
     }
+
+    /// Returns the published `PriceBookVersion` for `operator` at
+    /// `version`. No auth — read-only.
+    ///
+    /// Errors: `NotFound` if no such version exists.
+    pub fn get_version(
+        env: Env,
+        operator: Address,
+        version: u32,
+    ) -> Result<PriceBookVersion, Error> {
+        storage::get_version(&env, &operator, version).ok_or(Error::NotFound)
+    }
+
+    /// Returns the latest version number `operator` has published. No
+    /// auth — read-only.
+    ///
+    /// Errors: `NotFound` if `operator` has never published.
+    pub fn latest(env: Env, operator: Address) -> Result<u32, Error> {
+        storage::get_latest(&env, &operator).ok_or(Error::NotFound)
+    }
 }

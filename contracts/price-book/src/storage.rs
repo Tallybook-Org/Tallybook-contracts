@@ -60,9 +60,6 @@ pub fn set_latest(env: &Env, operator: &Address, version: u32) {
 }
 
 /// A single published version, if it exists.
-// Consumed by the public `get_version` function (build sequence step 15),
-// not by publish().
-#[allow(dead_code)]
 pub fn get_version(env: &Env, operator: &Address, version: u32) -> Option<PriceBookVersion> {
     env.storage().persistent().get(&DataKey::Version(operator.clone(), version))
 }
