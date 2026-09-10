@@ -132,7 +132,12 @@ because they come from a real consumer of the interface. File them here with an 
 1. Check the four upstream versions in §4. Report movement; file an issue only if something
    actually changed in a way that affects this repo.
 2. Run one read-only call against each deployed contract. Confirm both still resolve.
-3. `make fmt-check && make clippy && make test && make build` from a wiped `target/`.
+3. `make fmt-check && make build && make clippy && make test` from a wiped `target/`.
+   `build` must come before `clippy`/`test` — `statement-registry` contractimports
+   `price-book`'s compiled wasm, which doesn't exist yet on a wiped `target/` (see the
+   `Makefile`'s own comment on `build-statement-registry`). The reverse order fails
+   immediately with `error: No such file or directory` pointing at
+   `price_book.wasm` — reproduced verifying this document itself.
 4. `mdbook build docs` — confirm zero warnings.
 5. Report: what was checked, what moved, what was filed. "Nothing to report" is a valid and
    frequent outcome.
