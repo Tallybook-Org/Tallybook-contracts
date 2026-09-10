@@ -12,7 +12,18 @@ once, at deploy — see [Deploying](deploying.md).
 
 ### `publish`
 
+This operator has published several times since this page was first written —
+`publish()` requires the new `effective_ledger` to exceed both the current
+ledger and the previous version's `effective_ledger`, so a literal historical
+number goes stale as soon as either constraint moves past it (confirmed
+directly: the value originally shown here, `4600000`, now fails with
+`EffectiveInPast`). Read both constraints live instead of hardcoding either
+one:
+
 ```
+LATEST=$(stellar contract invoke --id CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW --network testnet --source tb-deployer -- latest --operator GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM)
+PREV_EFF=$(stellar contract invoke --id CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW --network testnet --source tb-deployer -- get_version --operator GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM --version "$LATEST" | python3 -c "import json,sys; print(json.load(sys.stdin)['effective_ledger'])")
+
 stellar contract invoke \
   --id CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW \
   --network testnet \
@@ -22,18 +33,20 @@ stellar contract invoke \
   --operator GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM \
   --schedule_hash e759c25665bbca00d8f9efc4cfeb5a642613205085fca0bf75f805fdfc7525b7 \
   --uri https://example.com/tallybook-testnet-schedule-v2.json \
-  --effective_ledger 4600000
+  --effective_ledger "$((PREV_EFF + 100000))"
 ```
 
 ```
-🔗 https://stellar.expert/explorer/testnet/tx/c24d843cbee7c74dca0f5c04b80263f6cb1b26f411e036597c7745511e3b2cd2
-📅 ... Event: PublishEvent (price_book, publish), operator: "GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM", version: 2, schedule_hash: "e759c25665bbca00d8f9efc4cfeb5a642613205085fca0bf75f805fdfc7525b7", effective_ledger: 4600000
-2
+🔗 https://stellar.expert/explorer/testnet/tx/a577f6e7cdb27247f7f9181ec09415b6de6341485be1994650401ba0196b5cf7
+📅 ... Event: PublishEvent (price_book, publish), operator: "GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM", version: 11, schedule_hash: "e759c25665bbca00d8f9efc4cfeb5a642613205085fca0bf75f805fdfc7525b7", effective_ledger: 4893867
+11
 ```
 
-This publishes version `2` for an operator who had already published version `1`
-earlier (`effective_ledger: 4600000` is in the future relative to when this ran, so
-`version_at` for any ledger before that still returns `1`, checked below).
+This is version `11` for an operator whose history has grown through repeated
+testing of this page and of [Verifying a charge](../guides/verifying-a-charge.md)
+— the exact version number you get depends on how many times this has run
+before you, which is exactly why the commands above read the constraints live
+instead of assuming a specific prior state.
 
 ### `get_version`
 
@@ -61,8 +74,11 @@ stellar contract invoke \
 ```
 
 ```
-2
+11
 ```
+
+(This grows every time `publish` above is re-run — see the note there. `latest`
+itself always succeeds; only the number changes.)
 
 ### `version_at`
 
