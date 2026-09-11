@@ -224,11 +224,19 @@ resp = server.send_transaction(tx)
 
 One real bug worth naming, since it cost real debugging time: the first attempt
 checked `entry.credentials.address is not None` to decide which entries needed
-signing, and every entry silently failed that check — this network issues
-`SOROBAN_CREDENTIALS_ADDRESS_V2` (CAP-71) credentials now, which live under
-`entry.credentials.address_v2`, not `.address`. Checking `entry.credentials.type !=
-SOROBAN_CREDENTIALS_SOURCE_ACCOUNT` instead (as above) doesn't care which address
-variant is in play, and is what actually worked.
+signing, and every entry silently failed that check. The cause was not the network —
+this network's own default for this call is classic `SOROBAN_CREDENTIALS_ADDRESS`,
+confirmed by reading the raw `simulateTransaction` response directly, with no SDK in
+the path. The cause was `prepare_transaction()` itself: the Python `stellar_sdk`
+defaults `use_upgraded_auth=True`, which requests CAP-71 `SOROBAN_CREDENTIALS_ADDRESS_V2`
+credentials from the RPC regardless of what the network would otherwise hand back —
+so `entry.credentials.address` was `None` because the SDK had asked for a format the
+entry wasn't in, not because the network issues that format. Confirmed directly:
+re-running the identical call with `use_upgraded_auth=False` makes the classic
+`.address` field populate instead, matching the raw RPC response exactly. Checking
+`entry.credentials.type != SOROBAN_CREDENTIALS_SOURCE_ACCOUNT` instead (as above)
+doesn't care which credential format is in play, and is what actually worked —
+correct regardless of which default the SDK or the RPC happens to be using.
 
 Result:
 
